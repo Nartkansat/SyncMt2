@@ -16,6 +16,8 @@ import winsound
 
 import glob
 
+APP_VERSION = "3.5.0"
+
 # --- PYINSTALLER EMBEDDED RESOURCE PATH RESOLVER ---
 def res_path(relative_path):
     """
@@ -2375,7 +2377,7 @@ WARNING      = "#F59E0B"   # Amber Sarı / Turuncu
 INFO         = "#3B82F6"   # Safir Mavi
 
 root = tk.Tk()
-root.title("⚡ SyncMT2 Otomasyon Engine")
+root.title(f"⚡ SyncMT2 Otomasyon Engine v{APP_VERSION}")
 
 # Dinamik Ekran Boyutu & Responsive Yerleşim (Düşük çözünürlüklü ekranlar ve Windows DPI taşmasını önler)
 try:
@@ -2765,7 +2767,7 @@ tk.Label(title_frame, text="Metin2 Otomasyon Sistemi",
 
 badge_frame = tk.Frame(header, bg="#1E1B4B", highlightthickness=1, highlightbackground=ACCENT)
 badge_frame.pack(side=tk.RIGHT, pady=4)
-tk.Label(badge_frame, text="v3.5 PRO", font=("Segoe UI", 8, "bold"), bg="#1E1B4B", fg=ACCENT_CYAN, padx=8, pady=3).pack()
+tk.Label(badge_frame, text=f"v{APP_VERSION} PRO", font=("Segoe UI", 8, "bold"), bg="#1E1B4B", fg=ACCENT_CYAN, padx=8, pady=3).pack()
 
 # İnce modern ayırıcı çizgi
 sep = tk.Frame(root_inner, bg=BORDER_COLOR, height=1)

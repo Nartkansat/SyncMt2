@@ -1,0 +1,55 @@
+name: Build and Release EXE
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Standalone Windows EXE
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller opencv-python numpy mss keyboard pygame
+
+      - name: Build EXE with PyInstaller
+        run: |
+          pyinstaller vision.spec --noconfirm
+
+      - name: Verify Built Executable
+        run: |
+          if (Test-Path dist/main.exe) {
+            Write-Host "Build success! main.exe size: $((Get-Item dist/main.exe).Length) bytes"
+          } else {
+            Write-Error "dist/main.exe not found!"
+            exit 1
+          }
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/main.exe
+            interception.dll
+            config.json
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
