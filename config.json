@@ -1,0 +1,96 @@
+{
+    "modules": {
+        "metin_enable": false,
+        "space": false,
+        "quote": true,
+        "target": true,
+        "revive": true,
+        "hp": true,
+        "mp": true,
+        "item": false,
+        "patrol": false,
+        "clearing": false,
+        "use_coords": false,
+        "ch_change": true,
+        "pot_alarm": false,
+        "horse_mode": true,
+        "pm_stop": true,
+        "player_name": "NART",
+        "min_x": "750",
+        "max_x": "900",
+        "min_y": "750",
+        "max_y": "3",
+        "fish_enable": true,
+        "fish_bait_key": "2",
+        "fish_rod_key": "3",
+        "fish_delay_min": "1.1",
+        "fish_delay_max": "1.6",
+        "fish_delay": "1.1 - 1.6",
+        "auto_bait": true,
+        "auto_open_fish": false,
+        "fish_armor_anim": true,
+        "captcha_enable": false,
+        "captcha_alarm": true,
+        "multi_bait": true,
+        "multi_bait_slot": 1,
+        "multi_bait_count": 41,
+        "pm_reply_1": "as",
+        "pm_reply_2": "abi ben kardesiyim tam bilmiyorum oyunu ben.",
+        "pm_reply_3": "dedigim gibi kardesiyim ben abim aktif olunca yazarsaniz sevinirim iyi oyunlar.",
+        "armor_pos": {
+            "x": 1765,
+            "y": 923
+        },
+        "metin_default": false,
+        "metin_hirs": false,
+        "metin_savas": false,
+        "metin_dovus": false,
+        "metin_siyah": false,
+        "metin_uzuntu": false,
+        "metin_ruh": true,
+        "hp_key": "f3",
+        "mp_key": "f2",
+        "multi_bait_keys": "alt+1, alt+2, alt+3, alt+4"
+    },
+    "skills": [
+        {
+            "enabled": true,
+            "key": "1",
+            "cooldown": "63"
+        },
+        {
+            "enabled": false,
+            "key": "2",
+            "cooldown": "17"
+        },
+        {
+            "enabled": false,
+            "key": "3",
+            "cooldown": "15"
+        },
+        {
+            "enabled": false,
+            "key": "4",
+            "cooldown": ""
+        },
+        {
+            "enabled": true,
+            "key": "f1",
+            "cooldown": "109"
+        }
+    ],
+    "hp_pixel": {
+        "x": 116,
+        "y": 1001,
+        "r": 34,
+        "g": 34,
+        "b": 34
+    },
+    "mp_pixel": {
+        "x": 135,
+        "y": 1016,
+        "r": 126,
+        "g": 185,
+        "b": 255
+    }
+}
