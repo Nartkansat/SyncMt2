@@ -16,7 +16,7 @@ import winsound
 
 import glob
 
-APP_VERSION = "3.5.0"
+APP_VERSION = "3.6.0"
 
 # --- PYINSTALLER EMBEDDED RESOURCE PATH RESOLVER ---
 def res_path(relative_path):
@@ -2655,7 +2655,11 @@ def open_multi_bait_key_manager():
 
     def reset_detector_label():
         try:
-            if not active_mods:
+            user32 = ctypes.windll.user32
+            c_down = bool(user32.GetAsyncKeyState(0x11) & 0x8000)
+            a_down = bool(user32.GetAsyncKeyState(0x12) & 0x8000)
+            s_down = bool(user32.GetAsyncKeyState(0x10) & 0x8000)
+            if not (c_down or a_down or s_down):
                 lbl_detector.config(text="[ Dinleniyor... ] Klavyeden bir tuşa veya kombinasyona basın", fg="#38BDF8")
                 lbl_status_icon.config(text="⌨️")
                 box_frame.config(highlightbackground="#3B82F6")
@@ -2824,13 +2828,23 @@ def open_multi_bait_key_manager():
         if keycode in (91, 92) or keysym in ('Win_L', 'Win_R', 'Caps_Lock', 'Num_Lock', 'Scroll_Lock'):
             return "break"
 
-        # 2. MODIFIER PREFİKSİNİ BELİRLE
+        # 2. MODIFIER PREFİKSİNİ BELİRLE (NumLock veya CapsLock'tan etkilenmeyen doğrudan Windows API)
+        try:
+            user32 = ctypes.windll.user32
+            ctrl_down = bool(user32.GetAsyncKeyState(0x11) & 0x8000)
+            alt_down = bool(user32.GetAsyncKeyState(0x12) & 0x8000)
+            shift_down = bool(user32.GetAsyncKeyState(0x10) & 0x8000)
+        except Exception:
+            ctrl_down = 'ctrl' in active_mods
+            alt_down = 'alt' in active_mods
+            shift_down = 'shift' in active_mods
+
         prefix = ""
-        if 'ctrl' in active_mods or (event.state & 0x0004):
+        if ctrl_down:
             prefix = "ctrl+"
-        elif 'alt' in active_mods or (event.state & 0x20000) or (event.state & 0x0008):
+        elif alt_down:
             prefix = "alt+"
-        elif 'shift' in active_mods or (event.state & 0x0001):
+        elif shift_down:
             prefix = "shift+"
 
         # 3. ANA TUŞU ÇÖZÜMLE
@@ -2874,8 +2888,16 @@ def open_multi_bait_key_manager():
         if keycode in (16, 160, 161) or keysym in ('Shift_L', 'Shift_R'):
             active_mods.discard('shift')
 
-        if not active_mods:
-            reset_detector_label()
+        try:
+            user32 = ctypes.windll.user32
+            c_down = bool(user32.GetAsyncKeyState(0x11) & 0x8000)
+            a_down = bool(user32.GetAsyncKeyState(0x12) & 0x8000)
+            s_down = bool(user32.GetAsyncKeyState(0x10) & 0x8000)
+            if not (c_down or a_down or s_down):
+                reset_detector_label()
+        except Exception:
+            if not active_mods:
+                reset_detector_label()
         return "break"
 
     top.bind("<KeyPress>", on_key_press)
@@ -3516,15 +3538,6 @@ entry_fmax = tk.Entry(f_row2, textvariable=var_fish_delay_max, width=5, bg="#0B0
                       font=("Segoe UI", 9, "bold"), relief=tk.FLAT, justify="center", highlightthickness=1, highlightbackground=BORDER_COLOR)
 entry_fmax.pack(side=tk.LEFT)
 entry_fmax.bind("<FocusOut>", lambda ev: apply_settings())
-
-section_label(fish_tab_container, "BALIK DURUMU & İSTATİSTİK")
-fish_stat_card = make_card(fish_tab_container)
-fish_stat_frame = tk.Frame(fish_stat_card, bg=CARD_COLOR)
-fish_stat_frame.pack(fill=tk.X, padx=10, pady=10)
-
-lbl_fish_stat = tk.Label(fish_stat_frame, text="🎣 Balık Botu Hazır\nTutulan Balık: 0  |  Kaçırılan: 0",
-                         font=("Segoe UI", 9, "bold"), bg=CARD_COLOR, fg=ACCENT_CYAN, justify="left")
-lbl_fish_stat.pack(anchor="w", padx=6, pady=4)
 
 # ==========================================
 # UPDATE_UI (YENİDEN TANIMLA - MODERN GÖRSEL RENKLER)

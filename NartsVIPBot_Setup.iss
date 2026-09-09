@@ -4,7 +4,7 @@
 
 [Setup]
 AppName=NART's VIP Bot Metin2
-AppVersion=3.5
+AppVersion=3.6.0
 AppPublisher=NART
 DefaultDirName={autopf}\NartsVIPBot
 DefaultGroupName=NartsVIPBot

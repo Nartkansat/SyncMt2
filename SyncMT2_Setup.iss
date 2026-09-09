@@ -4,7 +4,7 @@
 
 [Setup]
 AppName=SyncMT2 Otomasyon Engine
-AppVersion=3.5
+AppVersion=3.6.0
 AppPublisher=SyncMT2
 DefaultDirName={autopf}\SyncMT2
 DefaultGroupName=SyncMT2
