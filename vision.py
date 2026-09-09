@@ -2597,6 +2597,294 @@ def reset_multi_bait_counter():
     first_k = keys[0] if keys else "alt+1"
     print(f"[BALIK BOTU] 🔄 Yem sayacı sıfırlandı! İlk yem tuşuna dönüldü: [{first_k.upper()}] (Slot 1/{len(keys)} - 200/200).")
 
+def open_multi_bait_key_manager():
+    """Çoklu yem için etkileşimli, klavye dinleyen ve Ctrl/Alt/Shift kombinasyonlarını yakalayan düzenleme popup'ı."""
+    top = tk.Toplevel(root)
+    top.title("🎯 Çoklu Yem Tuş Sırası Yöneticisi")
+    top.configure(bg="#0B0C14")
+    
+    # Pencereyi ana pencere ortasına konumlandır
+    try:
+        rx = root.winfo_rootx()
+        ry = root.winfo_rooty()
+        rw = root.winfo_width()
+        rh = root.winfo_height()
+        tw, th = 530, 580
+        px = max(10, rx + (rw - tw) // 2)
+        py = max(10, ry + (rh - th) // 2)
+        top.geometry(f"{tw}x{th}+{px}+{py}")
+    except Exception:
+        top.geometry("530x580")
+        
+    top.resizable(False, False)
+    top.transient(root)
+    top.grab_set()
+
+    # Mevcut tuş listesinin kopyasını al
+    temp_keys = list(get_multi_bait_key_list())
+    active_mods = set()
+
+    # --- ÜST BAŞLIK BANNER ---
+    header_f = tk.Frame(top, bg="#0B0C14")
+    header_f.pack(fill=tk.X, padx=16, pady=(14, 8))
+    
+    tk.Label(header_f, text="⚡ Çoklu Yem Tuş Sırası Yöneticisi", font=("Segoe UI", 13, "bold"), bg="#0B0C14", fg="#FFFFFF").pack(anchor="w")
+    tk.Label(header_f, text="Klavyenizden doğrudan bir tuşa basın (Örn: Ctrl+1, Alt+2, F1, 1). Tuşlar sırayla listeye eklenecektir.",
+             font=("Segoe UI", 8), bg="#0B0C14", fg="#9CA3AF").pack(anchor="w", pady=(2, 0))
+
+    # --- CANLI TUŞ DİNLEME ALANI (BÜYÜK ETKİLEŞİMLİ KUTU) ---
+    box_frame = tk.Frame(top, bg="#11131F", highlightthickness=2, highlightbackground="#3B82F6", padx=12, pady=12)
+    box_frame.pack(fill=tk.X, padx=16, pady=(4, 10))
+
+    lbl_status_icon = tk.Label(box_frame, text="⌨️", font=("Segoe UI", 18), bg="#11131F", fg="#38BDF8")
+    lbl_status_icon.pack()
+
+    lbl_detector = tk.Label(
+        box_frame,
+        text="[ Dinleniyor... ] Klavyeden bir tuşa veya kombinasyona basın",
+        font=("Segoe UI", 10, "bold"), bg="#11131F", fg="#38BDF8"
+    )
+    lbl_detector.pack(pady=(4, 2))
+
+    lbl_detector_sub = tk.Label(
+        box_frame,
+        text="(Ctrl veya Alt'a basılı tutup bir tuşa bastığınızda otomatik kombinasyon olarak yakalanır)",
+        font=("Segoe UI", 8), bg="#11131F", fg="#6B7280"
+    )
+    lbl_detector_sub.pack()
+
+    def reset_detector_label():
+        try:
+            if not active_mods:
+                lbl_detector.config(text="[ Dinleniyor... ] Klavyeden bir tuşa veya kombinasyona basın", fg="#38BDF8")
+                lbl_status_icon.config(text="⌨️")
+                box_frame.config(highlightbackground="#3B82F6")
+        except Exception:
+            pass
+
+    # --- LİSTE ALANI (KAYDIRILABİLİR SIRA LİSTESİ) ---
+    list_header = tk.Frame(top, bg="#0B0C14")
+    list_header.pack(fill=tk.X, padx=16, pady=(4, 2))
+    tk.Label(list_header, text="📋 MEVCUT KULLANIM SIRASI:", font=("Segoe UI", 8, "bold"), bg="#0B0C14", fg="#9CA3AF").pack(side=tk.LEFT)
+    lbl_count_tag = tk.Label(list_header, text=f"Toplam: {len(temp_keys)} Tuş", font=("Segoe UI", 8, "bold"), bg="#0B0C14", fg=ACCENT_CYAN)
+    lbl_count_tag.pack(side=tk.RIGHT)
+
+    container = tk.Frame(top, bg="#11131F", highlightthickness=1, highlightbackground=BORDER_COLOR)
+    container.pack(fill=tk.BOTH, expand=True, padx=16, pady=(2, 8))
+
+    canvas = tk.Canvas(container, bg="#11131F", highlightthickness=0)
+    scrollbar = tk.Scrollbar(container, orient="vertical", command=canvas.yview)
+    scrollable_frame = tk.Frame(canvas, bg="#11131F")
+
+    scrollable_frame.bind(
+        "<Configure>",
+        lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+    )
+
+    canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+    def on_canvas_configure(event):
+        canvas.itemconfig(canvas_window, width=event.width)
+    canvas.bind("<Configure>", on_canvas_configure)
+
+    canvas.configure(yscrollcommand=scrollbar.set)
+    canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+
+    def remove_key_index(idx):
+        if 0 <= idx < len(temp_keys):
+            del temp_keys[idx]
+            render_keys_list()
+
+    def render_keys_list():
+        for widget in scrollable_frame.winfo_children():
+            widget.destroy()
+
+        lbl_count_tag.config(text=f"Toplam: {len(temp_keys)} Tuş")
+
+        if not temp_keys:
+            empty_lbl = tk.Label(
+                scrollable_frame,
+                text="Henüz tuş atanmadı.\nKlavyenizden tuşlara basarak listeye yeni tuş ekleyin.",
+                font=("Segoe UI", 9), bg="#11131F", fg="#6B7280", pady=24
+            )
+            empty_lbl.pack(fill=tk.X)
+            return
+
+        for i, k in enumerate(temp_keys):
+            row = tk.Frame(scrollable_frame, bg="#16192B", highlightthickness=1, highlightbackground=BORDER_COLOR, padx=8, pady=4)
+            row.pack(fill=tk.X, padx=6, pady=3)
+
+            # Slot numarası rozeti
+            slot_badge = tk.Frame(row, bg="#1E1B4B", padx=6, pady=2)
+            slot_badge.pack(side=tk.LEFT, padx=(0, 8))
+            tk.Label(slot_badge, text=f"Slot {i+1}", font=("Segoe UI", 8, "bold"), bg="#1E1B4B", fg=ACCENT_CYAN).pack()
+
+            # Tuş ismi (Büyük Harfle)
+            tk.Label(row, text=f"[{k.upper()}]", font=("Segoe UI", 10, "bold"), bg="#16192B", fg="#FFFFFF").pack(side=tk.LEFT)
+
+            # Açıklama
+            tk.Label(row, text="(200 yem bittiğinde sıradakine geçer)", font=("Segoe UI", 8), bg="#16192B", fg="#6B7280").pack(side=tk.LEFT, padx=(10, 0))
+
+            # Sil butonu
+            btn_del = tk.Button(
+                row, text="Sil ✕", font=("Segoe UI", 8, "bold"),
+                bg="#2E1015", fg="#F87171", activebackground="#DC2626", activeforeground="#FFFFFF",
+                bd=0, relief=tk.FLAT, cursor="hand2", padx=6, pady=2,
+                command=lambda index=i: remove_key_index(index)
+            )
+            btn_del.pack(side=tk.RIGHT)
+
+        # Otomatik en alta kaydır
+        canvas.update_idletasks()
+        canvas.yview_moveto(1.0)
+
+    # --- HIZLI ŞABLON VE TEMİZLEME BUTONLARI ---
+    tmpl_bar = tk.Frame(top, bg="#0B0C14")
+    tmpl_bar.pack(fill=tk.X, padx=16, pady=(0, 8))
+
+    def load_template(keys_list):
+        nonlocal temp_keys
+        temp_keys = list(keys_list)
+        render_keys_list()
+
+    def clear_all_keys():
+        nonlocal temp_keys
+        temp_keys = []
+        render_keys_list()
+
+    btn_t1 = tk.Button(tmpl_bar, text="⚡ Alt+1..4 Yükle", font=("Segoe UI", 8),
+                       bg="#16192B", fg="#9CA3AF", bd=0, relief=tk.FLAT, cursor="hand2", padx=6, pady=3,
+                       command=lambda: load_template(["alt+1", "alt+2", "alt+3", "alt+4"]))
+    btn_t1.pack(side=tk.LEFT, padx=(0, 4))
+
+    btn_t2 = tk.Button(tmpl_bar, text="⚡ 1..4 Yükle", font=("Segoe UI", 8),
+                       bg="#16192B", fg="#9CA3AF", bd=0, relief=tk.FLAT, cursor="hand2", padx=6, pady=3,
+                       command=lambda: load_template(["1", "2", "3", "4"]))
+    btn_t2.pack(side=tk.LEFT, padx=4)
+
+    btn_clr = tk.Button(tmpl_bar, text="🗑️ Tümünü Temizle", font=("Segoe UI", 8, "bold"),
+                        bg="#261214", fg="#F87171", bd=0, relief=tk.FLAT, cursor="hand2", padx=6, pady=3,
+                        command=clear_all_keys)
+    btn_clr.pack(side=tk.RIGHT)
+
+    # --- ALT KAYDET VE İPTAL BUTONLARI ---
+    action_bar = tk.Frame(top, bg="#0B0C14")
+    action_bar.pack(fill=tk.X, padx=16, pady=(4, 14))
+
+    def save_and_close():
+        final_list = temp_keys if temp_keys else ["alt+1", "alt+2", "alt+3", "alt+4"]
+        keys_str = ", ".join(final_list)
+        var_multi_bait_keys.set(keys_str)
+        apply_settings()
+        update_multi_bait_ui()
+        print(f"[AYARLAR] 🪱 Yeni çoklu yem tuş sırası kaydedildi: {keys_str}")
+        top.destroy()
+
+    btn_save = tk.Button(action_bar, text="💾  KAYDET VE UYGULA",
+                         font=("Segoe UI", 9, "bold"), bg=SUCCESS, fg="#06281E",
+                         activebackground="#0D9488", activeforeground="#FFFFFF",
+                         bd=0, relief=tk.FLAT, cursor="hand2", padx=14, pady=7,
+                         command=save_and_close)
+    btn_save.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 6))
+
+    btn_cancel = tk.Button(action_bar, text="✕  İptal",
+                           font=("Segoe UI", 9), bg="#1F2937", fg="#D1D5DB",
+                           activebackground="#374151", activeforeground="#FFFFFF",
+                           bd=0, relief=tk.FLAT, cursor="hand2", padx=14, pady=7,
+                           command=top.destroy)
+    btn_cancel.pack(side=tk.RIGHT, padx=(6, 0))
+
+    # --- KLAVYE OLAY YAKALAMA (KEYPRESS & KEYRELEASE) ---
+    def on_key_press(event):
+        keycode = event.keycode
+        keysym = event.keysym
+
+        # 1. MODIFIER TUŞLARI (Tek başına basıldığında kaydedilmez, durumu aktif edilir)
+        if keycode in (17, 162, 163) or keysym in ('Control_L', 'Control_R'):
+            active_mods.add('ctrl')
+            lbl_detector.config(text="⏳  [ CTRL + ... ]  Şimdi bir tuşa basın!", fg="#F59E0B")
+            lbl_status_icon.config(text="⏳")
+            box_frame.config(highlightbackground="#F59E0B")
+            return "break"
+
+        if keycode in (18, 164, 165) or keysym in ('Alt_L', 'Alt_R'):
+            active_mods.add('alt')
+            lbl_detector.config(text="⏳  [ ALT + ... ]  Şimdi bir tuşa basın!", fg="#F59E0B")
+            lbl_status_icon.config(text="⏳")
+            box_frame.config(highlightbackground="#F59E0B")
+            return "break"
+
+        if keycode in (16, 160, 161) or keysym in ('Shift_L', 'Shift_R'):
+            active_mods.add('shift')
+            lbl_detector.config(text="⏳  [ SHIFT + ... ]  Şimdi bir tuşa basın!", fg="#F59E0B")
+            lbl_status_icon.config(text="⏳")
+            box_frame.config(highlightbackground="#F59E0B")
+            return "break"
+
+        if keycode in (91, 92) or keysym in ('Win_L', 'Win_R', 'Caps_Lock', 'Num_Lock', 'Scroll_Lock'):
+            return "break"
+
+        # 2. MODIFIER PREFİKSİNİ BELİRLE
+        prefix = ""
+        if 'ctrl' in active_mods or (event.state & 0x0004):
+            prefix = "ctrl+"
+        elif 'alt' in active_mods or (event.state & 0x20000) or (event.state & 0x0008):
+            prefix = "alt+"
+        elif 'shift' in active_mods or (event.state & 0x0001):
+            prefix = "shift+"
+
+        # 3. ANA TUŞU ÇÖZÜMLE
+        if 48 <= keycode <= 57:
+            key_name = chr(keycode)
+        elif 96 <= keycode <= 105:
+            key_name = str(keycode - 96)
+        elif 112 <= keycode <= 123:
+            key_name = f"f{keycode - 111}"
+        elif 65 <= keycode <= 90:
+            key_name = chr(keycode).lower()
+        elif keycode == 32 or keysym.lower() == 'space':
+            key_name = "space"
+        elif keycode == 13 or keysym.lower() in ('return', 'enter'):
+            key_name = "enter"
+        elif keycode == 27 or keysym.lower() in ('escape', 'esc'):
+            key_name = "esc"
+        else:
+            key_name = keysym.lower()
+
+        full_key = f"{prefix}{key_name}"
+
+        # 4. LİSTEYE EKLE VE GÖRSEL GERİ BİLDİRİM VER
+        temp_keys.append(full_key)
+        render_keys_list()
+
+        lbl_detector.config(text=f"✔  [{full_key.upper()}]  Listeye Eklendi!", fg="#10B981")
+        lbl_status_icon.config(text="🎯")
+        box_frame.config(highlightbackground="#10B981")
+
+        top.after(1000, reset_detector_label)
+        return "break"
+
+    def on_key_release(event):
+        keycode = event.keycode
+        keysym = event.keysym
+        if keycode in (17, 162, 163) or keysym in ('Control_L', 'Control_R'):
+            active_mods.discard('ctrl')
+        if keycode in (18, 164, 165) or keysym in ('Alt_L', 'Alt_R'):
+            active_mods.discard('alt')
+        if keycode in (16, 160, 161) or keysym in ('Shift_L', 'Shift_R'):
+            active_mods.discard('shift')
+
+        if not active_mods:
+            reset_detector_label()
+        return "break"
+
+    top.bind("<KeyPress>", on_key_press)
+    top.bind("<KeyRelease>", on_key_release)
+
+    # İlk listeyi çiz ve popup'a odaklan
+    render_keys_list()
+    top.focus_set()
+
 def get_random_fish_delay():
     """Balık çekme gecikmesini Min-Max aralığında rastgele hesaplar."""
     try:
@@ -3152,6 +3440,14 @@ tk.Label(keys_row, text="Tuş Sırası (virgülle ayırın):", font=("Segoe UI",
 e_multi_keys = tk.Entry(keys_row, textvariable=var_multi_bait_keys, bg="#141724", fg=FG_COLOR, insertbackground=FG_COLOR, font=("Segoe UI", 9, "bold"), relief=tk.FLAT)
 e_multi_keys.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6, pady=5)
 e_multi_keys.bind("<FocusOut>", lambda ev: (apply_settings(), update_multi_bait_ui()))
+
+btn_key_mgr = tk.Button(
+    keys_row, text="🎯 Tuş Ata / Sıra Düzenle",
+    bg="#1E1B4B", fg=ACCENT_CYAN, activebackground=ACCENT, activeforeground="#FFFFFF",
+    font=("Segoe UI", 8, "bold"), bd=0, relief=tk.FLAT,
+    cursor="hand2", command=open_multi_bait_key_manager
+)
+btn_key_mgr.pack(side=tk.RIGHT, padx=(0, 6), pady=3, ipady=3, ipadx=8)
 
 # 2. Canlı Durum ve Sıfırlama Butonu
 status_row = tk.Frame(multi_bait_frame, bg=CARD_COLOR)
