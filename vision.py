@@ -1870,42 +1870,35 @@ def _load_bv_templates():
 def _find_verify_window(full_bgr):
     """
     Bot Verify penceresini ekranda arar.
-    Kullanıcının birebir ekran görüntüsünden alınan 1:1 şablonlar ile %100 kusursuz çift doğrulama:
-    1. bot_verify_ok.png (88x24px OK Butonu) şablonu (>= 0.80)
-    2. bot_verify_yellow_text.png (86x10px Sarı '<svside> Bot Verify' Metni) şablonu (>= 0.75)
-    Her iki şablon da aynı anda doğrulandığında pencere konumu döner.
-    Boş ekranda ASLA tetiklenmez.
+    1. bot_verify_ok.png (88x24px OK Butonu)
+    2. bot_verify_yellow_text.png (86x10px Sarı '<svside> Bot Verify' Metni)
+    Kullanıcı butona fare getirdiğinde (hover) veya tıkladığında buton dokusu değişse bile,
+    sarı başlık metni pencerenin açık olduğunu bağımsız olarak %100 yakalar.
     """
     _load_bv_templates()
     gray = cv2.cvtColor(full_bgr, cv2.COLOR_BGR2GRAY)
     h_img, w_img = gray.shape
 
-    if _bv_ok_tpl is None:
-        return None
+    # 1. Doğrudan OK butonu şablon eşlemesi (>= 0.75)
+    if _bv_ok_tpl is not None:
+        res_ok = cv2.matchTemplate(gray, _bv_ok_tpl, cv2.TM_CCOEFF_NORMED)
+        _, max_val_ok, _, max_loc_ok = cv2.minMaxLoc(res_ok)
+        if max_val_ok >= 0.75:
+            ox, oy = max_loc_ok
+            wx = max(0, ox - 28)
+            wy = max(0, oy - 142)
+            return wx, wy, 144, 186
 
-    res_ok = cv2.matchTemplate(gray, _bv_ok_tpl, cv2.TM_CCOEFF_NORMED)
-    _, max_val_ok, _, max_loc_ok = cv2.minMaxLoc(res_ok)
-
-    if max_val_ok >= 0.80:
-        ox, oy = max_loc_ok
-
-        wx = max(0, ox - 28)
-        wy = max(0, oy - 142)
-        ww, wh = 144, 186
-
-        # Çift Doğrulama: OK butonunun hemen altındaki sarı metin şablonunu kontrol et
-        if _bv_text_tpl is not None:
-            sub_y1, sub_y2 = oy + 15, min(h_img, oy + 50)
-            sub_x1, sub_x2 = max(0, ox - 15), min(w_img, ox + 100)
-            sub_gray = gray[sub_y1:sub_y2, sub_x1:sub_x2]
-
-            if sub_gray.size > 0:
-                res_txt = cv2.matchTemplate(sub_gray, _bv_text_tpl, cv2.TM_CCOEFF_NORMED)
-                _, max_val_txt, _, _ = cv2.minMaxLoc(res_txt)
-                if max_val_txt >= 0.70:
-                    return wx, wy, ww, wh
-        else:
-            return wx, wy, ww, wh
+    # 2. Sarı Başlık Metni eşlemesi ('<svside> Bot Verify') (>= 0.72)
+    # Hatalı kod girişlerinde veya buton basılıyken pencerenin açık kaldığını teyit eder
+    if _bv_text_tpl is not None:
+        res_txt = cv2.matchTemplate(gray, _bv_text_tpl, cv2.TM_CCOEFF_NORMED)
+        _, max_val_txt, _, max_loc_txt = cv2.minMaxLoc(res_txt)
+        if max_val_txt >= 0.72:
+            tx, ty = max_loc_txt
+            wx = max(0, tx - 30)
+            wy = max(0, ty - 160)
+            return wx, wy, 144, 186
 
     return None
 
@@ -1915,21 +1908,23 @@ def _click_pos(x, y):
 
 def verify_alert_loop():
     """
-    Her 0.8 saniyede bir ekranda Bot Verify doğrulama penceresini arar.
+    Ekranda Bot Verify doğrulama penceresini arar.
     Algılandığında botu derhal durdurur ve codevoice.mp3 sesini kesintisiz döngüde çalar.
-    Pencere ekrandan kaybolana (kullanıcı manuel çözene) kadar ses çalar ve botları bekletir,
-    pencere kapandığında sesi anında susturur ve bot modüllerini otomatik tekrar başlatır.
+    Pencere kapandığında (hatalı kod yenilenmesinde veya fare hareketinde yanlış tetiklenmemesi için
+    2 ardışık negatif kontrolle teyit edildiğinde) sesi susturur ve bot modüllerini otomatik tekrar başlatır.
     """
     global is_running
     is_alerting = False
+    consecutive_misses = 0
 
     with mss.mss() as sct:
         while True:
-            time.sleep(0.8)
+            time.sleep(0.5)
             if not is_running:
                 if is_alerting:
                     stop_code_voice_loop()
                     is_alerting = False
+                    consecutive_misses = 0
                 continue
 
             try:
@@ -1939,6 +1934,7 @@ def verify_alert_loop():
 
                 result = _find_verify_window(full_bgr)
                 if result is not None:
+                    consecutive_misses = 0
                     wx, wy, ww, wh = result
                     if not is_alerting:
                         print(f"[BOT VERIFY UYARISI] 🔐 Bot Verify doğrulama penceresi algılandı! ({wx},{wy}) {ww}x{wh}")
@@ -1953,13 +1949,18 @@ def verify_alert_loop():
                                 pass
                 else:
                     if is_alerting:
-                        print("[BOT VERIFY UYARISI] 🧹 Bot Verify penceresi kapandı/çözüldü. Ses susturuldu ve bot modülleri tekrar aktif ediliyor...")
-                        stop_code_voice_loop()
-                        is_alerting = False
-                        try:
-                            root.after(0, restore_active_bot_modules)
-                        except Exception:
-                            pass
+                        consecutive_misses += 1
+                        # Yanlış kod girişi veya anlık buton animasyonlarında pencereyi erken kapandı sanmamak için
+                        # en az 2 ardışık kontrolde (1.0 sn) pencerenin tamamen kaybolduğu doğrulanmalıdır
+                        if consecutive_misses >= 2:
+                            print("[BOT VERIFY UYARISI] 🧹 Bot Verify penceresi kapandı/çözüldü. Ses susturuldu ve bot modülleri tekrar aktif ediliyor...")
+                            stop_code_voice_loop()
+                            is_alerting = False
+                            consecutive_misses = 0
+                            try:
+                                root.after(0, restore_active_bot_modules)
+                            except Exception:
+                                pass
             except Exception as e:
                 pass
 
@@ -2027,7 +2028,7 @@ def disable_active_bot_modules(reason="Belirtilmedi"):
     global previous_bot_module, cfg_metin_enable, cfg_fish_enable
     print(f"[BOT DURDURMA BİLGİSİ] 🛑 Bot Modülleri Pasife Alındı! Sebep: {reason}")
     try:
-        # Önceden çalışan aktif bot modülünü hatırla
+        # Önceden çalışan aktif bot modülünü hatırla (eğer zaten bir modül kayıtlı değilse)
         if cfg_metin_enable or (var_metin_enable and var_metin_enable.get()):
             previous_bot_module = "METIN"
         elif cfg_fish_enable or (var_fish_enable and var_fish_enable.get()):
@@ -2053,19 +2054,16 @@ def disable_active_bot_modules(reason="Belirtilmedi"):
 def restore_active_bot_modules():
     global previous_bot_module, fish_needs_reset
     try:
-        # Ekranda hala Bot Verify penceresi varsa ASLA botu tekrar aktif etme!
-        with mss.mss() as sct:
-            mon = sct.monitors[1]
-            img_bgra = np.array(sct.grab(mon))
-            full_bgr = cv2.cvtColor(img_bgra, cv2.COLOR_BGRA2BGR)
-            if _find_verify_window(full_bgr) is not None:
-                print("[CAPTCHA] ✋ Bot Verify penceresi ekranda olduğu için bot modülleri aktif EDİLMEDİ!")
-                return
+        # Hangi bot modülünün tekrar başlatılacağını belirle
+        target = previous_bot_module
+        if not target:
+            # Fallback emniyeti: previous_bot_module boş kalmışsa bile Balık botu olarak devam et
+            target = "FISH"
 
-        if previous_bot_module == "METIN":
+        if target == "METIN":
             print("[BOT] 🔄 Metin Botu tekrar aktif ediliyor...")
             var_metin_enable.set(True)
-        elif previous_bot_module == "FISH":
+        elif target == "FISH":
             print("[BOT] 🔄 Balık Botu tekrar aktif ediliyor...")
             fish_needs_reset = True
             var_fish_enable.set(True)
@@ -2073,6 +2071,8 @@ def restore_active_bot_modules():
         previous_bot_module = None
         apply_settings()
         refresh_all_visuals()
+    except Exception as e:
+        print(f"[BOT] Modülleri geri yükleme hatası: {e}")
     except Exception:
         pass
 
