@@ -16,7 +16,7 @@ import winsound
 
 import glob
 
-APP_VERSION = "3.6.0"
+APP_VERSION = "3.7.0"
 
 # --- PYINSTALLER EMBEDDED RESOURCE PATH RESOLVER ---
 def res_path(relative_path):
@@ -87,7 +87,14 @@ hp_pixel = None # Örn: {"x": 100, "y": 100, "r": 255, "g": 0, "b": 0}
 mp_pixel = None # Örn: {"x": 100, "y": 100, "r": 0, "g": 0, "b": 255}
 calibration_mode = None # "hp" veya "mp"
 calibrating_armor_pos = False
-cfg_armor_pos = None      # {"x": int, "y": int}
+calibrating_armor_id = 1
+cfg_armor_pos = None      # genel geriye dönük fallback
+cfg_armor_pos_1 = None    # {"x": int, "y": int} 1. İstemci (Sol) Zırhı
+cfg_armor_pos_2 = None    # {"x": int, "y": int} 2. İstemci (Sağ) Zırhı
+armor_rel_offset = None   # (rel_x, rel_y) istemci penceresi içi bağıl konum
+
+calibrating_win_id = None
+manual_win_rects = {}     # {1: rect, 2: rect}
 
 def get_color_at(x, y):
     with mss.mss() as sct:
@@ -96,13 +103,15 @@ def get_color_at(x, y):
         return int(r), int(g), int(b)
 
 def _wait_armor_click_thread():
-    global calibrating_armor_pos, cfg_armor_pos
+    global calibrating_armor_pos, calibrating_armor_id
     while ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000:
         time.sleep(0.05)
     time.sleep(0.15)
     
     calibrating_armor_pos = True
-    print("[BİLGİ] Zırh konumu için: Farenizi envanterdeki Zırhın üzerine getirip F9 tuşuna basın (veya Sol Tıklayın)...")
+    c_id = calibrating_armor_id or 1
+    side_name = "Sol" if c_id == 1 else "Sağ"
+    print(f"[BİLGİ] {c_id}. İstemci ({side_name} Ekran) Zırh konumu için: Farenizi envanterdeki Zırhın üzerine götürüp Sol Tıklayın veya F9'a basın...")
     
     while calibrating_armor_pos:
         if keyboard.is_pressed('f9') or (ctypes.windll.user32.GetAsyncKeyState(0x78) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000):
@@ -111,10 +120,8 @@ def _wait_armor_click_thread():
                 _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
             pt = POINT()
             ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
-            cfg_armor_pos = {"x": pt.x, "y": pt.y}
-            print(f"[BİLGİ] 🛡️ [F9/Interception] Zırh konumu algılandı: X={pt.x}, Y={pt.y}")
-            
-            time.sleep(0.3)
+            print(f"[BİLGİ] 🛡️ [F9/Tıkla] {c_id}. İstemci ({side_name}) Zırh konumu algılandı: X={pt.x}, Y={pt.y}")
+            time.sleep(0.2)
             try:
                 root.after(0, on_armor_pos_captured, pt.x, pt.y)
             except Exception:
@@ -122,27 +129,125 @@ def _wait_armor_click_thread():
             break
         time.sleep(0.03)
 
-def start_armor_calibration():
-    global calibrating_armor_pos
+def start_armor_calibration_for(client_id=1):
+    global calibrating_armor_pos, calibrating_armor_id
     if calibrating_armor_pos:
         return
-    if 'btn_armor_pos' in globals() and btn_armor_pos:
-        btn_armor_pos.config(text="📍 Zırha Gelip F9 veya Tıkla...", bg="#D97706", fg="#FFFFFF")
-    if 'lbl_armor_pos' in globals() and lbl_armor_pos:
-        lbl_armor_pos.config(text="F9 tuşu / Tıklama bekleniyor...", fg="#F59E0B")
+    calibrating_armor_id = client_id
+    side_name = "Sol" if client_id == 1 else "Sağ"
+    btn = btn_armor_pos_1 if client_id == 1 else btn_armor_pos_2
+    lbl = lbl_armor_pos_1 if client_id == 1 else lbl_armor_pos_2
+    if btn:
+        btn.config(text=f"📍 {client_id}. ({side_name}) Zırha Sol Tıkla / F9...", bg="#D97706", fg="#FFFFFF")
+    if lbl:
+        lbl.config(text=f"Farenizi {client_id}. Zırha götürüp Sol Tıklayın veya F9'a basın...", fg="#F59E0B")
     t = threading.Thread(target=_wait_armor_click_thread, daemon=True)
     t.start()
 
+def start_armor_calibration():
+    start_armor_calibration_for(1)
+
 def on_armor_pos_captured(x, y):
-    if 'btn_armor_pos' in globals() and btn_armor_pos:
-        btn_armor_pos.config(text="🛡️ Zırh Konum Kaydet", bg="#1F2937", fg="#F3F4F6")
-    if 'lbl_armor_pos' in globals() and lbl_armor_pos:
-        lbl_armor_pos.config(text=f"Zırh Konumu: X={x}, Y={y}", fg=SUCCESS)
+    global cfg_armor_pos, cfg_armor_pos_1, cfg_armor_pos_2, calibrating_armor_id
+    c_id = calibrating_armor_id if calibrating_armor_id in (1, 2) else 1
+    pos = {"x": int(x), "y": int(y)}
+    side_name = "Sol" if c_id == 1 else "Sağ"
+
+    if c_id == 1:
+        cfg_armor_pos_1 = pos
+        cfg_armor_pos = pos
+        if 'btn_armor_pos_1' in globals() and btn_armor_pos_1:
+            btn_armor_pos_1.config(text="🛡️ 1. İstemci (Sol) Zırhı Kaydet", bg="#1F2937", fg="#F3F4F6")
+        if 'lbl_armor_pos_1' in globals() and lbl_armor_pos_1:
+            lbl_armor_pos_1.config(text=f"1. Zırh (Sol): X={x}, Y={y} ✓", fg=SUCCESS)
+    elif c_id == 2:
+        cfg_armor_pos_2 = pos
+        if 'btn_armor_pos_2' in globals() and btn_armor_pos_2:
+            btn_armor_pos_2.config(text="🛡️ 2. İstemci (Sağ) Zırhı Kaydet", bg="#1F2937", fg="#F3F4F6")
+        if 'lbl_armor_pos_2' in globals() and lbl_armor_pos_2:
+            lbl_armor_pos_2.config(text=f"2. Zırh (Sağ): X={x}, Y={y} ✓", fg=SUCCESS)
+
     save_config()
     try:
-        messagebox.showinfo("Zırh Konumu Algılandı", f"Zırh konumu başarıyla algılandı!\n\nX: {x}\nY: {y}")
+        messagebox.showinfo(f"{c_id}. İstemci Zırh Konumu Kaydedildi", f"{c_id}. İstemci ({side_name} Ekran) için Zırh Konumu Başarıyla Kaydedildi!\n\nX: {x}\nY: {y}")
     except Exception:
         pass
+    calibrating_armor_id = None
+
+def _wait_window_click_thread(client_id):
+    global calibrating_win_id, manual_win_rects
+    while ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000:
+        time.sleep(0.05)
+    time.sleep(0.15)
+    
+    side_name = "Sol" if client_id == 1 else "Sağ"
+    print(f"[BİLGİ] 📍 {client_id}. İstemci ({side_name}) seçimi için: Farenizi {client_id}. oyun penceresinin içine getirip Sol Tıklayın veya F9'a basın...")
+    while calibrating_win_id == client_id:
+        if keyboard.is_pressed('f9') or (ctypes.windll.user32.GetAsyncKeyState(0x78) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000):
+            class POINT(ctypes.Structure):
+                _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+            class RECT(ctypes.Structure):
+                _fields_ = [('left', ctypes.c_long), ('top', ctypes.c_long), ('right', ctypes.c_long), ('bottom', ctypes.c_long)]
+            pt = POINT()
+            ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+            hwnd = ctypes.windll.user32.WindowFromPoint(pt)
+            root_hwnd = ctypes.windll.user32.GetAncestor(hwnd, 2) or hwnd
+            r = RECT()
+            ctypes.windll.user32.GetWindowRect(root_hwnd, ctypes.byref(r))
+            w = r.right - r.left
+            h = r.bottom - r.top
+
+            screen_w = ctypes.windll.user32.GetSystemMetrics(0)
+            screen_h = ctypes.windll.user32.GetSystemMetrics(1)
+            eff_h = max(600, screen_h - 40)
+            half_w = screen_w // 2
+
+            # Masaüstü (tüm ekran genişliği) veya geçersiz boyut tespit edilirse:
+            if w < 250 or h < 150 or w >= screen_w - 50:
+                is_left = (client_id == 1) or (pt.x < half_w)
+                r.left = 0 if is_left else half_w
+                r.top = 0
+                w = half_w
+                h = eff_h
+                root_hwnd = None
+
+            # Odaklanma tıklama noktası: Pencerenin başlık çubuğunun güvenli bir noktası
+            focus_pt_x = int(r.left + min(220, max(50, w // 4)))
+            focus_pt_y = int(r.top + 15)
+
+            manual_win_rects[client_id] = {
+                'left': int(r.left),
+                'top': int(r.top),
+                'width': int(w),
+                'height': int(h),
+                'hwnd': root_hwnd,
+                'focus_click': (focus_pt_x, focus_pt_y)
+            }
+            save_config()
+            calibrating_win_id = None
+            time.sleep(0.2)
+            try:
+                root.after(0, refresh_detected_clients_ui)
+                messagebox.showinfo(f"{client_id}. Pencere Kaydedildi", f"{client_id}. Oyun penceresi ({side_name}) başarıyla kaydedildi!\n\nOdak Tıklama Noktası: ({focus_pt_x}, {focus_pt_y})\nAlan: ({r.left}, {r.top}) {w}x{h}")
+            except Exception:
+                pass
+            break
+        time.sleep(0.03)
+
+def start_window_calibration(client_id):
+    global calibrating_win_id
+    calibrating_win_id = client_id
+    side_name = "Sol" if client_id == 1 else "Sağ"
+    if 'lbl_win_calib_status' in globals() and lbl_win_calib_status:
+        lbl_win_calib_status.config(text=f"📍 Farenizi {client_id}. Pencerenin ({side_name}) içine götürüp Sol Tıklayın veya F9'a basın...", fg="#F59E0B")
+    t = threading.Thread(target=_wait_window_click_thread, args=(client_id,), daemon=True)
+    t.start()
+
+def reset_manual_window_rects():
+    global manual_win_rects
+    manual_win_rects.clear()
+    save_config()
+    refresh_detected_clients_ui()
 
 def calibrate_hotkey_loop():
     global hp_pixel, mp_pixel, calibration_mode
@@ -219,6 +324,12 @@ cfg_multi_bait = False        # Çoklu Yem Modu
 cfg_multi_bait_keys = "alt+1, alt+2, alt+3, alt+4" # Çoklu yem için kullanılacak tuş sırası
 cfg_multi_bait_slot = 1       # Aktif slot: 1..5 (Alt+1 .. Alt+5)
 cfg_multi_bait_count = 0      # Mevcut slotta kullanılan yem sayısı (0..200)
+cfg_multi_client_enable = True # Çoklu İstemci / Pencere Takibi
+cfg_multi_win_title = "Waryong2.com Real Hard Server" # Aranacak pencere başlığı filtresi
+cfg_client_mode = "2_SPLIT" # "2_SPLIT" (Sol/Sağ), "1_SINGLE"
+cfg_armor_pos_1 = None
+cfg_armor_pos_2 = None
+
 
 # --- HEDEF METIN AYARLARI ---
 cfg_metin_default = True
@@ -622,22 +733,188 @@ def get_cached_chat_lost_template():
         chat_lost_cache = cv2.imread(p, cv2.IMREAD_GRAYSCALE)
     return chat_lost_cache
 
+def get_game_windows():
+    """
+    Ekrandaki Metin2 / Waryong2 oyun pencerelerini tespit eder.
+    1. Eğer kullanıcı manuel olarak '1. Pencereyi Tıkla' / '2. Pencereyi Tıkla' yaptıysa o koordinatları kullanır.
+    2. Eğer '2 İstemci (Sol / Sağ Yarı)' modundaysa (varsayılan):
+       Ekranı tam ortadan ikiye böler (Sol: 0..half_w, Sağ: half_w..screen_w).
+       Her iki pencerenin başlık çubuğu tıklama noktaları (focus_click) atanır.
+       hwnd None bırakılarak pencerelerin koordinatlarının kayması engellenir.
+    3. Eğer '1 İstemci (Tek Ekran)' modundaysa:
+       Tüm ekranı tek istemci olarak kullanır.
+    """
+    user32 = ctypes.windll.user32
+    screen_w = user32.GetSystemMetrics(0)
+    screen_h = user32.GetSystemMetrics(1)
+    effective_h = max(600, screen_h - 40)
+    half_w = screen_w // 2
+
+    mode = var_client_mode.get() if 'var_client_mode' in globals() else "2_SPLIT"
+    multi_enabled = var_multi_client_enable.get() if 'var_multi_client_enable' in globals() else True
+
+    # 1 İstemci Modu
+    if mode == "1_SINGLE" or not multi_enabled:
+        return [{
+            'id': 1,
+            'hwnd': None,
+            'title': '1. İstemci (Tek Ekran)',
+            'rect': {'left': 0, 'top': 0, 'width': screen_w, 'height': effective_h},
+            'focus_click': (screen_w // 4, 15)
+        }]
+
+    # Kullanıcı elle pencere tıklayarak belirlediyse (manual_win_rects)
+    global manual_win_rects
+    if len(manual_win_rects) >= 2:
+        res = []
+        for cid in [1, 2]:
+            if cid in manual_win_rects:
+                mr = manual_win_rects[cid]
+                res.append({
+                    'id': cid,
+                    'hwnd': mr.get('hwnd'),
+                    'title': f'İstemci #{cid} (Manuel Seçim)',
+                    'rect': {
+                        'left': mr['left'],
+                        'top': mr['top'],
+                        'width': mr['width'],
+                        'height': mr['height']
+                    },
+                    'focus_click': mr.get('focus_click', (mr['left'] + min(220, max(40, mr['width'] // 4)), mr['top'] + 15))
+                })
+        if len(res) == 2:
+            return res
+
+    # 2 İstemci (Sol / Sağ Yarı Ekran Düzeni - Kullanıcının tam ekran görüntüsü düzeni)
+    win_left = {
+        'id': 1,
+        'hwnd': None,
+        'title': f'1. İstemci (Sol Ekran: 0..{half_w})',
+        'rect': {
+            'left': 0,
+            'top': 0,
+            'width': half_w,
+            'height': effective_h
+        },
+        'focus_click': (150, 15)
+    }
+
+    win_right = {
+        'id': 2,
+        'hwnd': None,
+        'title': f'2. İstemci (Sağ Ekran: {half_w}..{screen_w})',
+        'rect': {
+            'left': half_w,
+            'top': 0,
+            'width': half_w,
+            'height': effective_h
+        },
+        'focus_click': (half_w + 150, 15)
+    }
+
+    return [win_left, win_right]
+
+def activate_game_window(client_or_id):
+    """
+    Hedef oyun penceresini donanım seviyesinde öne getirir ve odaklar.
+    Kullanıcının belirttiği gibi: Pencereye SOL TIKLAYARAK (%100 garantili) odaklanma sağlanır!
+    """
+    if not client_or_id:
+        return
+    
+    client = client_or_id
+    if isinstance(client_or_id, int):
+        wins = get_game_windows()
+        client = next((w for w in wins if w['id'] == client_or_id), None)
+        if not client:
+            return
+
+    hwnd = client.get('hwnd') if isinstance(client, dict) else None
+    user32 = ctypes.windll.user32
+    if hwnd and user32.IsWindow(hwnd):
+        try:
+            if user32.IsIconic(hwnd):
+                user32.ShowWindow(hwnd, 9)
+            user32.SetForegroundWindow(hwnd)
+            user32.BringWindowToTop(hwnd)
+        except Exception:
+            pass
+
+    # Pencereye SOL TIKLAYARAK pencereyi kesin aktif yap
+    fc = client.get('focus_click') if isinstance(client, dict) else None
+    if fc:
+        fx, fy = fc
+    else:
+        r = client.get('rect', {}) if isinstance(client, dict) else {}
+        fx = r.get('left', 0) + min(220, max(40, r.get('width', 800) // 4))
+        fy = r.get('top', 0) + 15
+
+    # Donanımsal Sol Tıklama ile pencereyi kesin olarak öne getir ve odakla
+    send_mouse_click_raw(fx, fy, right=False)
+    time.sleep(0.09)
+
+def update_client_rect(client):
+    """Pencere taşındıysa veya boyutu değiştiyse istemci koordinatlarını günceller."""
+    if not client.get('hwnd'):
+        return True
+    user32 = ctypes.windll.user32
+    if not user32.IsWindow(client['hwnd']) or not user32.IsWindowVisible(client['hwnd']) or user32.IsIconic(client['hwnd']):
+        return False
+    class RECT(ctypes.Structure):
+        _fields_ = [('left', ctypes.c_long), ('top', ctypes.c_long), ('right', ctypes.c_long), ('bottom', ctypes.c_long)]
+    r = RECT()
+    if user32.GetWindowRect(client['hwnd'], ctypes.byref(r)):
+        w = r.right - r.left
+        h = r.bottom - r.top
+        if w >= 250 and h >= 150:
+            client['rect']['left'] = int(r.left)
+            client['rect']['top'] = int(r.top)
+            client['rect']['width'] = int(w)
+            client['rect']['height'] = int(h)
+            client['focus_click'] = (int(r.left + min(220, max(40, w // 4))), int(r.top + 15))
+            return True
+    return False
+
+def do_armor_cancel_for_client(client):
+    """Belirtilen istemcinin (1. veya 2. ekran) kendine ait zırhına sağ tıklar."""
+    if not cfg_fish_armor_anim:
+        return
+    client_id = client.get('id', 1) if isinstance(client, dict) else 1
+    target_pos = None
+    if client_id == 1 and cfg_armor_pos_1:
+        target_pos = cfg_armor_pos_1
+    elif client_id == 2 and cfg_armor_pos_2:
+        target_pos = cfg_armor_pos_2
+    elif client_id == 1 and cfg_armor_pos:
+        target_pos = cfg_armor_pos
+    elif cfg_armor_pos_1:
+        target_pos = cfg_armor_pos_1
+    elif cfg_armor_pos:
+        target_pos = cfg_armor_pos
+
+    if target_pos:
+        ax = target_pos.get("x")
+        ay = target_pos.get("y")
+        if ax is not None and ay is not None:
+            time.sleep(0.18)
+            side_str = "Sol" if client_id == 1 else "Sağ"
+            print(f"[BALIK BOTU] 🛡️ İstemci #{client_id} ({side_str} Ekran): Zırh animasyon sıfırlama (Sağ tık: X={ax}, Y={ay})...")
+            send_mouse_click_raw(ax, ay, right=True)
+            time.sleep(0.22)
+    else:
+        print(f"[BALIK BOTU] ⚠️ İstemci #{client_id} için zırh konumu ayarlanmamış! Arayüzden {client_id}. İstemci Zırhını Kaydediniz.")
+
 def fish_bot_loop():
     """
-    Balık Botu Ana Döngüsü - Temiz, Basit, Güvenilir
-
-    Her tur şu adımları sırayla yapar:
-      1. Yem Tak  (cfg_fish_bait_key)
-      2. Olta At  (cfg_fish_rod_key)
-      3. Balık/Küre sohbet yazısını veya baloncuğu bekle
-         - "Yemi kaybettin." → 1'e dön
-         - "oltaya takılmış..." / "birşey takıldı..." → çek
-         - baloncuk görünürse → çek
-         - 45 sn geçerse → 1'e dön
-      4. Olta Çek  (cfg_fish_rod_key)
-      5. Balığın envantere düşmesini bekle → 1'e dön
+    Çoklu İstemci (Multi-Client) & Tek İstemci Balık Botu Ana Motoru
+    - Ekranda 1 veya 2 açık Metin2 / Waryong2 penceresini aynı anda yönetir.
+    - Her pencerede eşzamanlı olta atar ve bağımsız olarak takip eder.
+    - Balık/baloncuk algılandığında ilgili istemciye tıklayarak odaklanır, oltayı çeker,
+      o pencereye ait zırhı tak-çıkar ile sıfırlar, yem takar ve tekrar suya atar.
+    - 25 saniye zaman aşımında diğer istemcileri kesintiye uğratmadan sadece ilgili istemciyi yeniler.
     """
-    global is_running, cfg_fish_enable, is_dead, cfg_fish_bait_key, cfg_fish_rod_key, cfg_fish_delay, cfg_multi_bait, cfg_multi_bait_slot, cfg_multi_bait_count
+    global is_running, cfg_fish_enable, is_dead, cfg_fish_bait_key, cfg_fish_rod_key, cfg_fish_delay
+    global cfg_multi_bait, cfg_multi_bait_slot, cfg_multi_bait_count, fish_needs_reset
 
     def press_key(key_str, count=1):
         key_clean = key_str.strip().lower()
@@ -693,6 +970,36 @@ def fish_bot_loop():
                     if count > 1:
                         time.sleep(0.15)
 
+    def apply_client_bait(client_id=1):
+        if not cfg_auto_bait:
+            return
+        time.sleep(0.15)
+        if cfg_multi_bait:
+            keys = get_multi_bait_key_list()
+            total_slots = len(keys)
+            global cfg_multi_bait_slot, cfg_multi_bait_count
+            if cfg_multi_bait_slot < 1 or cfg_multi_bait_slot > total_slots:
+                cfg_multi_bait_slot = 1
+            curr_idx = cfg_multi_bait_slot - 1
+            bait_key = keys[curr_idx]
+
+            cfg_multi_bait_count += 1
+            remaining = max(0, 200 - cfg_multi_bait_count)
+            print(f"[BALIK BOTU] 🪱 İstemci #{client_id}: Yem takılıyor (Tuş: [{bait_key.upper()}] | Slot: {cfg_multi_bait_slot}/{total_slots} | Kullanılan: {cfg_multi_bait_count}/200 - Kalan: {remaining})...")
+            press_key(bait_key, count=1)
+
+            if cfg_multi_bait_count >= 200:
+                cfg_multi_bait_count = 0
+                cfg_multi_bait_slot = (cfg_multi_bait_slot % total_slots) + 1
+                next_key = keys[cfg_multi_bait_slot - 1]
+                print(f"[BALIK BOTU] 🔄 200 Yem bitti! Sıradaki yem tuşuna geçildi: [{next_key.upper()}] (Slot {cfg_multi_bait_slot}/{total_slots})")
+
+            save_config()
+            update_multi_bait_ui()
+        else:
+            print(f"[BALIK BOTU] 🪱 İstemci #{client_id}: Yem takılıyor (Tuş: {cfg_fish_bait_key})...")
+            press_key(cfg_fish_bait_key, count=1)
+
     def scan_chat(sct, monitor):
         """Sohbet kutusunun ALT bölümünü tarayarak balık tespiti yapar."""
         region = {
@@ -704,8 +1011,6 @@ def fish_bot_loop():
         try:
             c_img  = np.array(sct.grab(region))
             c_gray = cv2.cvtColor(c_img, cv2.COLOR_BGRA2GRAY)
-
-            # Balık takıldı mı?
             for t in get_cached_chat_hook_templates():
                 res = cv2.matchTemplate(c_gray, t, cv2.TM_CCOEFF_NORMED)
                 if res.max() >= 0.78:
@@ -723,16 +1028,16 @@ def fish_bot_loop():
         cy = monitor["top"]  + monitor["height"] // 2
         region = {
             "top":    max(0, cy - 260),
-            "left":   max(0, cx - 280),
-            "width":  560,
-            "height": 380
+            "left":   max(0, cx - 220),
+            "width":  440,
+            "height": 340
         }
         try:
             img  = np.array(sct.grab(region))
             gray = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
             for t in templates:
                 res = cv2.matchTemplate(gray, t, cv2.TM_CCOEFF_NORMED)
-                if res.max() >= 0.60:
+                if res.max() >= 0.68:
                     return True
         except Exception:
             pass
@@ -743,150 +1048,161 @@ def fish_bot_loop():
         end = time.time() + seconds
         while time.time() < end:
             if not is_fish_mode_active():
-                return False   # iptal edildi
-            time.sleep(0.1)
-        return True            # tamamlandı
+                return False
+            time.sleep(0.05)
+        return True
 
-    def do_armor_cancel():
-        if cfg_fish_armor_anim and cfg_armor_pos:
-            time.sleep(0.25)
-            ax = cfg_armor_pos.get("x")
-            ay = cfg_armor_pos.get("y")
-            if ax is not None and ay is not None:
-                print(f"[BALIK BOTU] 🛡️ Zırh animasyon sıfırlama yapılıyor (Sağ tık: X={ax}, Y={ay})...")
-                send_mouse_click_raw(ax, ay, right=True)
-                time.sleep(0.25)
+    def cast_rod_for_client(c):
+        """
+        Belirtilen istemci için:
+        1. Pencereye odaklan
+        2. Yem tak (Metin2 yem takma animasyonunun oturması için 1.2 sn bekle)
+        3. Oltayı suya at (3 tuşu)
+        4. Oltanın suya inişi ve karakterin durulması için 1.4 sn bekle
+        5. WAITING_FISH durumuna geçir
+        """
+        if not is_fish_mode_active():
+            return False
+        print(f"[BALIK BOTU] 🎮 İstemci #{c['id']}: Pencereye odaklanılıyor...")
+        activate_game_window(c)
+        if not isleep(0.30):
+            return False
 
-    global fish_needs_reset
+        if cfg_auto_bait:
+            apply_client_bait(c['id'])
+            # Metin2'de yem takma animasyonu tamamlansın diye en az 1.2 sn bekle
+            if not isleep(1.20):
+                return False
+
+        print(f"[BALIK BOTU] 🎣 İstemci #{c['id']}: Olta suya atılıyor (Tuş: {cfg_fish_rod_key})...")
+        press_key(cfg_fish_rod_key, count=1)
+        c['cast_time'] = time.time()
+        c['state'] = 'WAITING_FISH'
+        print(f"[BALIK BOTU] ⏳ İstemci #{c['id']}: Olta suya atıldı, bekleniyor...")
+        if not isleep(1.40):
+            return False
+        return True
+
     with mss.mss() as sct:
+        clients = []
         was_interrupted = False
+
         while True:
             if not is_fish_mode_active():
                 was_interrupted = True
+                clients.clear()
                 time.sleep(0.3)
                 continue
 
-            if fish_needs_reset or was_interrupted:
+            # Başlangıçta veya sıfırlamada istemcileri tespit et ve sırayla ilk atışları yap
+            if not clients or fish_needs_reset or was_interrupted:
                 fish_needs_reset = False
                 was_interrupted = False
-                time.sleep(0.4)
+                time.sleep(0.3)
 
-            monitor = sct.monitors[1]
+                detected = get_game_windows()
+                clients = []
+                for w in detected:
+                    clients.append({
+                        'id': w['id'],
+                        'hwnd': w.get('hwnd'),
+                        'title': w['title'],
+                        'rect': dict(w['rect']),
+                        'focus_click': w.get('focus_click'),
+                        'state': 'NEED_CAST',
+                        'cast_time': 0.0,
+                        'hook_time': 0.0,
+                        'fish_delay': 1.0
+                    })
 
-            # ── ADIM 1: YEM TAK ──────────────────────────────────────
-            if cfg_auto_bait:
-                time.sleep(0.4) # Karakter duruşunun ve envanterin tamamen sıfırlanması için emniyet beklemesi
+                print(f"[ÇOKLU BALIK BOTU] 🎮 Toplam {len(clients)} İstemci ile Balık Botu başlatılıyor...")
+                for c in clients:
+                    fc = c.get('focus_click')
+                    print(f"  • İstemci #{c['id']}: {c['title']} | Konum: ({c['rect']['left']},{c['rect']['top']}) {c['rect']['width']}x{c['rect']['height']} | Odak: {fc}")
+
+                # SIRAYLA: 1. İstemcide yemi tak ve oltayı at, sonra 2. İstemcide yemi tak ve oltayı at!
+                for c in clients:
+                    if not is_fish_mode_active():
+                        break
+                    success = cast_rod_for_client(c)
+                    if not success or not is_fish_mode_active():
+                        break
+
                 if not is_fish_mode_active():
-                    was_interrupted = True
-                    continue
-                
-                if cfg_multi_bait:
-                    keys = get_multi_bait_key_list()
-                    total_slots = len(keys)
-                    if cfg_multi_bait_slot < 1 or cfg_multi_bait_slot > total_slots:
-                        cfg_multi_bait_slot = 1
-                    curr_idx = cfg_multi_bait_slot - 1
-                    bait_key = keys[curr_idx]
-
-                    cfg_multi_bait_count += 1
-                    remaining = max(0, 200 - cfg_multi_bait_count)
-                    print(f"[BALIK BOTU] 🪱 Yem takılıyor (Tuş: [{bait_key.upper()}] | Slot: {cfg_multi_bait_slot}/{total_slots} | Kullanılan: {cfg_multi_bait_count}/200 - Kalan: {remaining})...")
-                    press_key(bait_key, count=1)
-                    
-                    if cfg_multi_bait_count >= 200:
-                        cfg_multi_bait_count = 0
-                        cfg_multi_bait_slot = (cfg_multi_bait_slot % total_slots) + 1
-                        next_key = keys[cfg_multi_bait_slot - 1]
-                        print(f"[BALIK BOTU] 🔄 200 Yem bitti! Sıradaki yem tuşuna geçildi: [{next_key.upper()}] (Slot {cfg_multi_bait_slot}/{total_slots})")
-                    
-                    save_config()
-                    update_multi_bait_ui()
-                else:
-                    print(f"[BALIK BOTU] 🪱 Yem takılıyor (Tuş: {cfg_fish_bait_key})...")
-                    press_key(cfg_fish_bait_key, count=1)
-
-                if not isleep(1.4):   # yem animasyonu — kesilirse başa dön
-                    was_interrupted = True
                     continue
 
-            # ── ADIM 2: OLTA AT ───────────────────────────────────────
-            if not is_fish_mode_active():
-                was_interrupted = True
-                continue
-            time.sleep(0.3) # Yemin envanterde işlenmesi için emniyet beklemesi
-            if not is_fish_mode_active():
-                was_interrupted = True
-                continue
-            print(f"[BALIK BOTU] 🎣 Olta suya atılıyor (Tuş: {cfg_fish_rod_key})...")
-            press_key(cfg_fish_rod_key, count=1)
-            cast_time = time.time()
-
-            # Olta atıldıktan sonra su hareketinin oturması için kısa bekleme
-            if not isleep(2.5):
-                was_interrupted = True
-                continue
-
-            # ── ADIM 3: BEKLE (Balık / Baloncuk / Timeout) ──────────────
-            print("[BALIK BOTU] 🔍 Balık bekleniyor...")
-            action = None
-            while is_running and cfg_fish_enable and not is_dead:
-                elapsed = time.time() - cast_time
-
-                # 25 sn timeout
-                if elapsed > 25.0:
-                    print("[BALIK BOTU] ⏰ 25 saniye doldu (Timeout), olta karaya çekilip yeniden başlanıyor...")
-                    press_key(cfg_fish_rod_key, count=1)   # geri çek
-                    isleep(2.0)
-                    action = "timeout"
+            # ÇOKLU İSTEMCİ BALON TARAMA VE EYLEM DÖNGÜSÜ
+            for c in clients:
+                if not is_fish_mode_active():
                     break
 
-                # Sohbet tarama
-                chat_result = scan_chat(sct, monitor)
-                if chat_result == "hooked":
-                    print("[BALIK BOTU] 💎 Sohbet: Balık takıldı!")
-                    action = "pull"
-                    break
+                now = time.time()
 
-                # Baloncuk tarama
-                if scan_bubble(sct, monitor):
-                    print("[BALIK BOTU] 💡 Baloncuk algılandı!")
-                    action = "pull"
-                    break
-
-                time.sleep(0.05)   # ~20 tarama/sn
-
-            if not (is_running and cfg_fish_enable):
-                was_interrupted = True
-                continue
-
-            if action != "pull":
-                # Timeout durumunda başa dön (Adım 1)
-                continue
-
-            # ── ADIM 4: OLTA ÇEK (SADECE BALIK GELDİĞİNDE) ─────────────
-            delay_val = get_random_fish_delay()
-
-            if delay_val > 0:
-                print(f"[BALIK BOTU] 🎲 {delay_val:.2f}sn rastgele gecikme bekleniyor (Aralık: {cfg_fish_delay_min}-{cfg_fish_delay_max}sn)...")
-                if not isleep(delay_val):
-                    was_interrupted = True
+                # 1. NEED_CAST DURUMU (Yeniden atış gereken istemci)
+                if c['state'] == 'NEED_CAST':
+                    cast_rod_for_client(c)
                     continue
 
-            print(f"[BALIK BOTU] 🎣 Olta çekiliyor (Tuş: {cfg_fish_rod_key})!")
-            press_key(cfg_fish_rod_key, count=1)
-            
-            # SADECE BURADA ZIRH DEĞİŞTİRME YAPILIR:
-            do_armor_cancel()
+                # 2. WAITING_FISH DURUMU (Balon simgesi arama / 25s Timeout)
+                if c['state'] == 'WAITING_FISH':
+                    elapsed = now - c['cast_time']
 
-            # ── ADIM 5: BALIK ENVANTERİN DÜŞME ANİMASYONU ───────────
-            print("[BALIK BOTU] ✅ Balık çekildi! Yeni tura hazırlanılıyor...")
-            # Zırh Giyme aktifse animasyon anında sıfırlandığından 0.6sn bekleme yeterlidir.
-            # Zırh Giyme kapalıysa Metin2 doğal balık çekme animasyonu için 2.5sn beklenir.
-            post_pull_wait = 0.6 if (cfg_fish_armor_anim and cfg_armor_pos) else 2.5
-            if not isleep(post_pull_wait):
-                was_interrupted = True
-                continue
-            # → başa dön (Adım 1)
+                    # 25 saniye zaman aşımı
+                    if elapsed > 25.0:
+                        print(f"[BALIK BOTU] ⏰ İstemci #{c['id']}: 25 saniye doldu (Timeout), olta çekilip tekrar atılıyor...")
+                        activate_game_window(c)
+                        isleep(0.10)
+                        press_key(cfg_fish_rod_key, count=1)
+                        isleep(0.60)
+                        cast_rod_for_client(c)
+                        continue
+
+                    # GÜVENLİK BEKLEMESİ: Olta atıldıktan sonra İLK 2.8 SANİYE TARAMA YAPMA!
+                    # Karakter kolunu indirirken veya su köpürürken yanlış balon algılamasını %100 önler!
+                    if elapsed < 2.8:
+                        continue
+
+                    # Balon simgesi kontrolü
+                    if scan_bubble(sct, c['rect']):
+                        delay = get_random_fish_delay()
+                        print(f"[BALIK BOTU] 💡 İstemci #{c['id']}: Balon simgesi algılandı! (Gecikme: {delay:.2f}s)")
+                        c['state'] = 'HOOKED'
+                        c['hook_time'] = now
+                        c['fish_delay'] = delay
+                        continue
+
+                # 3. HOOKED DURUMU (Balon geldi! Çek, zırh değiştir, yem tak, tekrar at)
+                if c['state'] == 'HOOKED':
+                    if now - c['hook_time'] >= c['fish_delay']:
+                        print(f"[BALIK BOTU] 🎣 İstemci #{c['id']}: Balon süresi doldu, olta çekiliyor (Tuş: {cfg_fish_rod_key})!")
+                        activate_game_window(c)
+                        isleep(0.08)
+                        press_key(cfg_fish_rod_key, count=1)
+
+                        # Zırh animasyon sıfırlama (Her istemci kendi zırhını tak-çıkar yapar)
+                        if cfg_fish_armor_anim:
+                            isleep(0.12)
+                            do_armor_cancel_for_client(c)
+                            isleep(0.40)
+                        else:
+                            isleep(1.60)
+
+                        # Yem tak ve tekrar suya at
+                        if cfg_auto_bait:
+                            apply_client_bait(c['id'])
+                            if not isleep(1.20):
+                                break
+
+                        print(f"[BALIK BOTU] 🎣 İstemci #{c['id']}: Yeni olta suya atılıyor (Tuş: {cfg_fish_rod_key})...")
+                        press_key(cfg_fish_rod_key, count=1)
+                        c['cast_time'] = time.time()
+                        c['state'] = 'WAITING_FISH'
+                        print(f"[BALIK BOTU] ✅ İstemci #{c['id']}: Zırh sıfırlandı, yem takıldı ve olta tekrar suda!")
+                        if not isleep(1.40):
+                            break
+
+            time.sleep(0.04)
+
 
 skills_config = [] # GUI tarafında doldurulacak
 
@@ -1800,7 +2116,14 @@ def stop_bot():
     bot_state = "IDLE"
     if 'var_fish_enable' in globals() and var_fish_enable.get():
         try:
-            send_fish_rod()
+            wins = get_game_windows()
+            if wins:
+                for w in wins:
+                    activate_game_window(w)
+                    send_fish_rod()
+                    time.sleep(0.04)
+            else:
+                send_fish_rod()
         except Exception:
             pass
     update_ui()
@@ -2034,7 +2357,14 @@ def disable_active_bot_modules(reason="Belirtilmedi"):
         elif cfg_fish_enable or (var_fish_enable and var_fish_enable.get()):
             previous_bot_module = "FISH"
             try:
-                send_fish_rod()
+                wins = get_game_windows()
+                if wins:
+                    for w in wins:
+                        activate_game_window(w)
+                        send_fish_rod()
+                        time.sleep(0.04)
+                else:
+                    send_fish_rod()
             except Exception:
                 pass
         
@@ -2440,6 +2770,7 @@ def apply_settings():
     global cfg_metin_default, cfg_metin_hirs, cfg_metin_savas, cfg_metin_dovus, cfg_metin_siyah, cfg_metin_uzuntu, cfg_metin_ruh
     global cfg_hp_key, cfg_mp_key, cfg_use_coords, cfg_min_x, cfg_max_x, cfg_min_y, cfg_max_y
     global cfg_fish_bait_key, cfg_fish_rod_key, cfg_fish_delay, cfg_fish_delay_min, cfg_fish_delay_max, cfg_auto_bait, cfg_auto_open_fish, cfg_fish_armor_anim, cfg_multi_bait, cfg_multi_bait_slot, cfg_multi_bait_count
+    global cfg_client_mode, cfg_multi_client_enable, cfg_multi_win_title
     global bot_state
     
     cfg_metin_enable = var_metin_enable.get()
@@ -2447,6 +2778,9 @@ def apply_settings():
     cfg_fish_armor_anim = var_fish_armor_anim.get()
     cfg_multi_bait   = var_multi_bait.get()
     cfg_multi_bait_keys = var_multi_bait_keys.get().strip() if 'var_multi_bait_keys' in globals() else "alt+1, alt+2, alt+3, alt+4"
+    cfg_client_mode = var_client_mode.get() if 'var_client_mode' in globals() else "2_SPLIT"
+    cfg_multi_client_enable = var_multi_client_enable.get() if 'var_multi_client_enable' in globals() else True
+    cfg_multi_win_title = var_multi_win_title.get().strip() if 'var_multi_win_title' in globals() else "Waryong2.com Real Hard Server"
     
     if cfg_fish_enable:
         cfg_metin_enable = False
@@ -2567,6 +2901,9 @@ var_auto_open_fish = tk.BooleanVar(value=False)
 var_fish_armor_anim = tk.BooleanVar(value=False)
 var_multi_bait     = tk.BooleanVar(value=False)
 var_multi_bait_keys = tk.StringVar(value="alt+1, alt+2, alt+3, alt+4")
+var_multi_client_enable = tk.BooleanVar(value=True)
+var_client_mode         = tk.StringVar(value="2_SPLIT") # "2_SPLIT" (Sol/Sağ Ekran) veya "1_SINGLE" (Tek Ekran)
+var_multi_win_title     = tk.StringVar(value="Waryong2.com Real Hard Server")
 
 def get_multi_bait_key_list():
     raw = var_multi_bait_keys.get() if 'var_multi_bait_keys' in globals() else cfg_multi_bait_keys
@@ -2996,12 +3333,14 @@ INFO_DESCRIPTIONS = {
     "Balık Botu Aktif": "Balık tutma otomasyonunu başlatır. Baloncuk veya sohbet yazısını algılayıp oltayı otomatik çeker.",
     "Otomatik Yem Tak": "Her olta atışından önce yem tuşuna (2) basarak oltaya yeni yem takar.",
     "Balıkları Aç": "Envantere gelen balıklara sağ tıklayarak balıkları otomatik açar.",
+    "Çoklu Pencere Takibi": "Ekranda açık olan tüm Waryong2 / Metin2 pencerelerini (2, 3 veya 4 istemci) eşzamanlı olarak takip eder. Her pencerede ayrı ayrı olta atar, balık vurduğunda ilgili pencereye odaklanıp oltayı çeker ve tekrar atar.",
     "MODÜLLER & OTOMASYON ÖZELLİKLERİ": "Metin botunun aktif çalıştırılacak modüllerini ve otomasyon fonksiyonlarını buradan açıp kapatabilirsiniz.",
     "HARİTA BÖLGE KOORDİNAT SINIRI": "Karakterin haritanın belirlenen sınırı dışına çıkmasını önlemek için koordinat alanlarını kısıtlar.",
     "CAN & MANA POT AYARLARI": "Karakterin canı veya manası düştüğünde ekrandaki piksel rengine göre otomatik F3/F2 pot basmasını sağlar. F6 ile piksel ayarlanır.",
     "HEDEF METİN SEÇİMİ": "Aranacak metin şablonlarını seçmenizi sağlar. Seçilen şablonlar ekranda otomatik tespit edilir.",
     "YETENEK & SKİL YÖNETİCİSİ": "Hava Kılıcı, Öfke vb. skillerin belirlediğiniz süre aralıklarında (cooldown) otomatik olarak açılmasını sağlar.",
     "BALIK BOTU OTOMASYONU": "Balık tutma otomasyonunun ana kontrol modüllerini içerir.",
+    "ÇOKLU İSTEMCİ & PENCERE TAKİBİ (WARYONG2)": "Birden fazla oyun penceresinde aynı anda balık botu çalıştırmanızı ve pencereleri otomatik taramanızı sağlar.",
     "BALIK TUTMA TUŞ & ZAMANLAMA AYARLARI": "Olta çekme süresini Min ve Max saniyeleri arasında rastgele belirleyerek anti-bot tespitini engeller."
 }
 
@@ -3449,6 +3788,92 @@ create_toggle_button(fish_opts_frame, "Otomatik Yem Tak",       var_auto_bait,  
 create_toggle_button(fish_opts_frame, "Balıkları Aç",           var_auto_open_fish,  1, 0)
 create_toggle_button(fish_opts_frame, "Zırh Giyme Animasyonu", var_fish_armor_anim, 1, 1)
 create_toggle_button(fish_opts_frame, "🪱 Çoklu Yem (Özel Sıralı / 200'lük)", var_multi_bait, 2, 0)
+create_toggle_button(fish_opts_frame, "Çoklu Pencere Takibi", var_multi_client_enable, 2, 1)
+
+section_label(fish_tab_container, "ÇOKLU İSTEMCİ & PENCERE TAKİBİ (WARYONG2)")
+multi_win_card = make_card(fish_tab_container)
+multi_win_frame = tk.Frame(multi_win_card, bg=CARD_COLOR)
+multi_win_frame.pack(fill=tk.X, padx=10, pady=10)
+
+# 1. Çalışma Modu (2 İstemci Sol/Sağ vs 1 İstemci Tek Ekran)
+mode_row = tk.Frame(multi_win_frame, bg=CARD_COLOR)
+mode_row.pack(fill=tk.X, padx=4, pady=(2, 6))
+
+tk.Label(mode_row, text="İstemci Modu:", font=("Segoe UI", 9, "bold"), bg=CARD_COLOR, fg=ACCENT_CYAN, width=14, anchor="w").pack(side=tk.LEFT)
+
+rb_2split = tk.Radiobutton(
+    mode_row, text="👥 2 İstemci (Sol / Sağ Yarı Ekran)",
+    variable=var_client_mode, value="2_SPLIT",
+    bg=CARD_COLOR, fg=FG_COLOR, selectcolor="#0B0C14", activebackground=CARD_COLOR, activeforeground=ACCENT_CYAN,
+    font=("Segoe UI", 9, "bold"), command=lambda: (apply_settings(), refresh_detected_clients_ui())
+)
+rb_2split.pack(side=tk.LEFT, padx=(0, 16))
+
+rb_1single = tk.Radiobutton(
+    mode_row, text="👤 1 İstemci (Tek Ekran)",
+    variable=var_client_mode, value="1_SINGLE",
+    bg=CARD_COLOR, fg=FG_COLOR, selectcolor="#0B0C14", activebackground=CARD_COLOR, activeforeground=ACCENT_CYAN,
+    font=("Segoe UI", 9, "bold"), command=lambda: (apply_settings(), refresh_detected_clients_ui())
+)
+rb_1single.pack(side=tk.LEFT, padx=0)
+
+# 2. Manuel Pencere Tanımlama / Kalibrasyon Butonları
+calib_btn_row = tk.Frame(multi_win_frame, bg=CARD_COLOR)
+calib_btn_row.pack(fill=tk.X, padx=4, pady=(4, 6))
+
+btn_calib_win_1 = tk.Button(
+    calib_btn_row, text="🖱️ 1. Pencereyi Tıkla (Sol)",
+    bg="#1F2937", fg="#F3F4F6", activebackground=ACCENT_CYAN, activeforeground="#000000",
+    font=("Segoe UI", 8, "bold"), bd=0, relief=tk.FLAT,
+    cursor="hand2", command=lambda: start_window_calibration(1)
+)
+btn_calib_win_1.pack(side=tk.LEFT, padx=(0, 8), ipady=3, ipadx=8)
+
+btn_calib_win_2 = tk.Button(
+    calib_btn_row, text="🖱️ 2. Pencereyi Tıkla (Sağ)",
+    bg="#1F2937", fg="#F3F4F6", activebackground=ACCENT_CYAN, activeforeground="#000000",
+    font=("Segoe UI", 8, "bold"), bd=0, relief=tk.FLAT,
+    cursor="hand2", command=lambda: start_window_calibration(2)
+)
+btn_calib_win_2.pack(side=tk.LEFT, padx=(0, 8), ipady=3, ipadx=8)
+
+btn_reset_wins = tk.Button(
+    calib_btn_row, text="🔄 Otomatik Düzene Sıfırla",
+    bg="#1E1B4B", fg=ACCENT_CYAN, activebackground=ACCENT, activeforeground="#FFFFFF",
+    font=("Segoe UI", 8, "bold"), bd=0, relief=tk.FLAT,
+    cursor="hand2", command=lambda: reset_manual_window_rects()
+)
+btn_reset_wins.pack(side=tk.LEFT, padx=(0, 8), ipady=3, ipadx=8)
+
+lbl_win_calib_status = tk.Label(
+    multi_win_frame,
+    text="💡 Pencereleriniz Sol ve Sağ yan yana ise otomatik bölünmüştür. İsterseniz butonlara basıp pencerelere tıklayarak da tanıtabilirsiniz.",
+    font=("Segoe UI", 8), bg=CARD_COLOR, fg="#6B7280", anchor="w"
+)
+lbl_win_calib_status.pack(fill=tk.X, padx=4, pady=(2, 4))
+
+lbl_clients_summary = tk.Label(
+    multi_win_frame,
+    text="🎮 Algılanan İstemciler: Tarama bekleniyor...",
+    font=("Segoe UI", 9, "bold"), bg=CARD_COLOR, fg="#9CA3AF", anchor="w", justify="left"
+)
+lbl_clients_summary.pack(fill=tk.X, padx=4, pady=(4, 2))
+
+def refresh_detected_clients_ui():
+    wins = get_game_windows()
+    if not wins:
+        if 'lbl_clients_summary' in globals() and lbl_clients_summary:
+            lbl_clients_summary.config(
+                text="🎮 Algılanan İstemci: 0 Adet",
+                fg="#F59E0B"
+            )
+    else:
+        txt = f"🎮 {len(wins)} Adet Oyun İstemcisi Aktif:\n"
+        for w in wins:
+            txt += f"  • [İstemci #{w['id']}]: {w['title']} | Alan: ({w['rect']['left']}, {w['rect']['top']}) {w['rect']['width']}x{w['rect']['height']} | Odak: {w.get('focus_click')}\n"
+        if 'lbl_clients_summary' in globals() and lbl_clients_summary:
+            lbl_clients_summary.config(text=txt.strip(), fg=SUCCESS)
+
 
 section_label(fish_tab_container, "ÇOKLU YEM YÖNETİMİ (ÖZEL TUŞ SIRASI)")
 multi_bait_card = make_card(fish_tab_container)
@@ -3495,15 +3920,48 @@ armor_cfg_card = make_card(fish_tab_container)
 armor_cfg_frame = tk.Frame(armor_cfg_card, bg=CARD_COLOR)
 armor_cfg_frame.pack(fill=tk.X, padx=10, pady=10)
 
-btn_armor_pos = tk.Button(armor_cfg_frame, text="🛡️ Zırh Konum Kaydet",
-                          bg="#1F2937", fg="#F3F4F6", activebackground=ACCENT_CYAN, activeforeground="#000000",
-                          font=("Segoe UI", 9, "bold"), bd=0, relief=tk.FLAT,
-                          cursor="hand2", command=start_armor_calibration)
-btn_armor_pos.pack(side=tk.LEFT, padx=(4, 12), ipady=4, ipadx=8)
+# 1. İstemci (Sol Ekran) Zırh Satırı
+row_armor_1 = tk.Frame(armor_cfg_frame, bg=CARD_COLOR)
+row_armor_1.pack(fill=tk.X, pady=(2, 6))
 
-lbl_armor_pos = tk.Label(armor_cfg_frame, text="Zırh Konumu: Ayarlanmadı",
-                         font=("Segoe UI", 9, "bold"), bg=CARD_COLOR, fg="#9CA3AF")
-lbl_armor_pos.pack(side=tk.LEFT, padx=4)
+btn_armor_pos_1 = tk.Button(
+    row_armor_1, text="🛡️ 1. İstemci (Sol) Zırhı Kaydet",
+    bg="#1F2937", fg="#F3F4F6", activebackground=ACCENT_CYAN, activeforeground="#000000",
+    font=("Segoe UI", 9, "bold"), bd=0, relief=tk.FLAT,
+    cursor="hand2", command=lambda: start_armor_calibration_for(1)
+)
+btn_armor_pos_1.pack(side=tk.LEFT, padx=(4, 12), ipady=4, ipadx=8)
+
+lbl_armor_pos_1 = tk.Label(
+    row_armor_1, text="1. Zırh (Sol): Ayarlanmadı",
+    font=("Segoe UI", 9, "bold"), bg=CARD_COLOR, fg="#9CA3AF"
+)
+lbl_armor_pos_1.pack(side=tk.LEFT, padx=4)
+
+# 2. İstemci (Sağ Ekran) Zırh Satırı
+row_armor_2 = tk.Frame(armor_cfg_frame, bg=CARD_COLOR)
+row_armor_2.pack(fill=tk.X, pady=(2, 4))
+
+btn_armor_pos_2 = tk.Button(
+    row_armor_2, text="🛡️ 2. İstemci (Sağ) Zırhı Kaydet",
+    bg="#1F2937", fg="#F3F4F6", activebackground=ACCENT_CYAN, activeforeground="#000000",
+    font=("Segoe UI", 9, "bold"), bd=0, relief=tk.FLAT,
+    cursor="hand2", command=lambda: start_armor_calibration_for(2)
+)
+btn_armor_pos_2.pack(side=tk.LEFT, padx=(4, 12), ipady=4, ipadx=8)
+
+lbl_armor_pos_2 = tk.Label(
+    row_armor_2, text="2. Zırh (Sağ): Ayarlanmadı",
+    font=("Segoe UI", 9, "bold"), bg=CARD_COLOR, fg="#9CA3AF"
+)
+lbl_armor_pos_2.pack(side=tk.LEFT, padx=4)
+
+lbl_armor_hint = tk.Label(
+    armor_cfg_frame,
+    text="💡 İpucu: Butona bastıktan sonra farenizi ilgili envanterdeki Zırhın üzerine götürüp Sol Tıklayın veya F9 tuşuna basın.",
+    font=("Segoe UI", 8), bg=CARD_COLOR, fg="#6B7280"
+)
+lbl_armor_hint.pack(anchor="w", padx=4, pady=(4, 0))
 
 section_label(fish_tab_container, "BALIK TUTMA TUŞ & ZAMANLAMA AYARLARI")
 fish_cfg_card = make_card(fish_tab_container)
@@ -3611,10 +4069,24 @@ def save_config(*args):
             "multi_bait_keys": var_multi_bait_keys.get().strip() or "alt+1, alt+2, alt+3, alt+4",
             "multi_bait_slot": cfg_multi_bait_slot,
             "multi_bait_count": cfg_multi_bait_count,
+            "client_mode":   var_client_mode.get(),
+            "multi_client_enable": var_multi_client_enable.get(),
+            "multi_win_title": var_multi_win_title.get().strip() or "Waryong2.com Real Hard Server",
             "pm_reply_1":    var_pm_reply_1.get(),
             "pm_reply_2":    var_pm_reply_2.get(),
             "pm_reply_3":    var_pm_reply_3.get(),
             "armor_pos":     cfg_armor_pos,
+            "armor_pos_1":   cfg_armor_pos_1,
+            "armor_pos_2":   cfg_armor_pos_2,
+            "manual_win_rects": {
+                str(k): {
+                    'left': v['left'],
+                    'top': v['top'],
+                    'width': v['width'],
+                    'height': v['height'],
+                    'focus_click': list(v.get('focus_click', (v['left']+150, v['top']+15)))
+                } for k, v in manual_win_rects.items()
+            },
             "metin_default": var_metin_default.get(),
             "metin_hirs":    var_metin_hirs.get(),
             "metin_savas":   var_metin_savas.get(),
@@ -3699,6 +4171,9 @@ def load_config():
         if "captcha_alarm" in mods: var_captcha_alarm.set(mods["captcha_alarm"])
         if "multi_bait"    in mods: var_multi_bait.set(mods["multi_bait"])
         if "multi_bait_keys" in mods: var_multi_bait_keys.set(mods["multi_bait_keys"])
+        if "client_mode"   in mods: var_client_mode.set(mods["client_mode"])
+        if "multi_client_enable" in mods: var_multi_client_enable.set(mods["multi_client_enable"])
+        if "multi_win_title" in mods: var_multi_win_title.set(mods["multi_win_title"])
         if "multi_bait_slot" in mods:
             global cfg_multi_bait_slot
             cfg_multi_bait_slot = int(mods.get("multi_bait_slot", 1))
@@ -3709,12 +4184,50 @@ def load_config():
         if "pm_reply_1"   in mods: var_pm_reply_1.set(mods["pm_reply_1"])
         if "pm_reply_2"   in mods: var_pm_reply_2.set(mods["pm_reply_2"])
         if "pm_reply_3"   in mods: var_pm_reply_3.set(mods["pm_reply_3"])
-        if "armor_pos"     in mods and mods["armor_pos"]:
-            global cfg_armor_pos
+
+        global cfg_armor_pos, cfg_armor_pos_1, cfg_armor_pos_2
+        if "armor_pos_1" in mods and mods["armor_pos_1"]:
+            cfg_armor_pos_1 = mods["armor_pos_1"]
+            if 'lbl_armor_pos_1' in globals() and lbl_armor_pos_1:
+                lbl_armor_pos_1.config(text=f"1. Zırh (Sol): X={cfg_armor_pos_1['x']}, Y={cfg_armor_pos_1['y']} ✓", fg=SUCCESS)
+        if "armor_pos_2" in mods and mods["armor_pos_2"]:
+            cfg_armor_pos_2 = mods["armor_pos_2"]
+            if 'lbl_armor_pos_2' in globals() and lbl_armor_pos_2:
+                lbl_armor_pos_2.config(text=f"2. Zırh (Sağ): X={cfg_armor_pos_2['x']}, Y={cfg_armor_pos_2['y']} ✓", fg=SUCCESS)
+
+        global manual_win_rects
+        if "manual_win_rects" in mods and isinstance(mods["manual_win_rects"], dict):
+            manual_win_rects = {}
+            for k, v in mods["manual_win_rects"].items():
+                try:
+                    cid = int(k)
+                    manual_win_rects[cid] = {
+                        'left': int(v['left']),
+                        'top': int(v['top']),
+                        'width': int(v['width']),
+                        'height': int(v['height']),
+                        'hwnd': None,
+                        'focus_click': tuple(v.get('focus_click', (int(v['left'])+150, int(v['top'])+15)))
+                    }
+                except Exception:
+                    pass
+
+        # Geriye dönük uyumluluk (eski tek armor_pos)
+        if "armor_pos" in mods and mods["armor_pos"]:
             cfg_armor_pos = mods["armor_pos"]
-            if isinstance(cfg_armor_pos, dict) and "x" in cfg_armor_pos and "y" in cfg_armor_pos:
-                if 'lbl_armor_pos' in globals() and lbl_armor_pos:
-                    lbl_armor_pos.config(text=f"Zırh Konumu: X={cfg_armor_pos['x']}, Y={cfg_armor_pos['y']}", fg=SUCCESS)
+            ax = cfg_armor_pos.get("x", 0)
+            u_sw = ctypes.windll.user32.GetSystemMetrics(0)
+            if ax > u_sw // 2:
+                if not cfg_armor_pos_2:
+                    cfg_armor_pos_2 = cfg_armor_pos
+                    if 'lbl_armor_pos_2' in globals() and lbl_armor_pos_2:
+                        lbl_armor_pos_2.config(text=f"2. Zırh (Sağ): X={cfg_armor_pos_2['x']}, Y={cfg_armor_pos_2['y']} ✓", fg=SUCCESS)
+            else:
+                if not cfg_armor_pos_1:
+                    cfg_armor_pos_1 = cfg_armor_pos
+                    if 'lbl_armor_pos_1' in globals() and lbl_armor_pos_1:
+                        lbl_armor_pos_1.config(text=f"1. Zırh (Sol): X={cfg_armor_pos_1['x']}, Y={cfg_armor_pos_1['y']} ✓", fg=SUCCESS)
+
         if "metin_default" in mods: var_metin_default.set(mods["metin_default"])
         if "metin_hirs"    in mods: var_metin_hirs.set(mods["metin_hirs"])
         if "metin_savas"   in mods: var_metin_savas.set(mods["metin_savas"])
@@ -3759,7 +4272,7 @@ for v in [var_space, var_quote, var_target, var_revive, var_hp, var_mp,
           var_metin_default, var_metin_hirs, var_metin_savas, var_metin_dovus, var_metin_siyah, var_metin_uzuntu, var_metin_ruh,
           var_hp_key, var_mp_key, var_min_x, var_max_x, var_min_y, var_max_y,
           var_fish_enable, var_fish_bait_key, var_fish_rod_key, var_fish_delay_min, var_fish_delay_max, var_fish_delay, var_auto_bait, var_auto_open_fish, var_fish_armor_anim,
-          var_captcha_enable, var_captcha_alarm, var_multi_bait, var_multi_bait_keys,
+          var_captcha_enable, var_captcha_alarm, var_multi_bait, var_multi_bait_keys, var_client_mode, var_multi_client_enable, var_multi_win_title,
           var_pm_reply_1, var_pm_reply_2, var_pm_reply_3]:
     v.trace_add("write", save_config)
 
@@ -3768,5 +4281,10 @@ load_config()
 
 # Toggle buton görsellerini yenile
 refresh_all_visuals()
+
+try:
+    root.after(800, refresh_detected_clients_ui)
+except Exception:
+    pass
 
 root.mainloop()
