@@ -16,7 +16,7 @@ import winsound
 
 import glob
 
-APP_VERSION = "3.7.0"
+APP_VERSION = "3.7.1"
 
 # --- PYINSTALLER EMBEDDED RESOURCE PATH RESOLVER ---
 def res_path(relative_path):
@@ -814,11 +814,15 @@ def get_game_windows():
 
     return [win_left, win_right]
 
+current_active_client_id = None
+
 def activate_game_window(client_or_id):
     """
     Hedef oyun penceresini donanım seviyesinde öne getirir ve odaklar.
-    Kullanıcının belirttiği gibi: Pencereye SOL TIKLAYARAK (%100 garantili) odaklanma sağlanır!
+    Pencere zaten aktifse tekrar tıklama yapmaz (sıfır gecikme).
+    Pencere değiştiğinde donanımsal sol tıklama ile odaklar ve Windows'un mesajı işlemesi için 0.12s bekler.
     """
+    global current_active_client_id
     if not client_or_id:
         return
     
@@ -828,6 +832,10 @@ def activate_game_window(client_or_id):
         client = next((w for w in wins if w['id'] == client_or_id), None)
         if not client:
             return
+
+    cid = client.get('id', 1)
+    if current_active_client_id == cid:
+        return
 
     hwnd = client.get('hwnd') if isinstance(client, dict) else None
     user32 = ctypes.windll.user32
@@ -851,7 +859,8 @@ def activate_game_window(client_or_id):
 
     # Donanımsal Sol Tıklama ile pencereyi kesin olarak öne getir ve odakla
     send_mouse_click_raw(fx, fy, right=False)
-    time.sleep(0.09)
+    time.sleep(0.12)
+    current_active_client_id = cid
 
 def update_client_rect(client):
     """Pencere taşındıysa veya boyutu değiştiyse istemci koordinatlarını günceller."""
@@ -1091,6 +1100,7 @@ def fish_bot_loop():
             if not is_fish_mode_active():
                 was_interrupted = True
                 clients.clear()
+                current_active_client_id = None
                 time.sleep(0.3)
                 continue
 
@@ -1098,6 +1108,7 @@ def fish_bot_loop():
             if not clients or fish_needs_reset or was_interrupted:
                 fish_needs_reset = False
                 was_interrupted = False
+                current_active_client_id = None
                 time.sleep(0.3)
 
                 detected = get_game_windows()
@@ -1131,34 +1142,19 @@ def fish_bot_loop():
                 if not is_fish_mode_active():
                     continue
 
-            # ÇOKLU İSTEMCİ BALON TARAMA VE EYLEM DÖNGÜSÜ
+            now = time.time()
+
+            # ── 1. ADIM: TÜM SUDAKİ İSTEMCİLERİ TARA (PARALEL & KESİNTİSİZ) ──
             for c in clients:
-                if not is_fish_mode_active():
-                    break
-
-                now = time.time()
-
-                # 1. NEED_CAST DURUMU (Yeniden atış gereken istemci)
-                if c['state'] == 'NEED_CAST':
-                    cast_rod_for_client(c)
-                    continue
-
-                # 2. WAITING_FISH DURUMU (Balon simgesi arama / 25s Timeout)
                 if c['state'] == 'WAITING_FISH':
                     elapsed = now - c['cast_time']
-
-                    # 25 saniye zaman aşımı
+                    # 25 sn zaman aşımı
                     if elapsed > 25.0:
-                        print(f"[BALIK BOTU] ⏰ İstemci #{c['id']}: 25 saniye doldu (Timeout), olta çekilip tekrar atılıyor...")
-                        activate_game_window(c)
-                        isleep(0.10)
-                        press_key(cfg_fish_rod_key, count=1)
-                        isleep(0.60)
-                        cast_rod_for_client(c)
+                        print(f"[BALIK BOTU] ⏰ İstemci #{c['id']}: 25 saniye doldu (Timeout), olta çekme kuyruğuna alındı...")
+                        c['state'] = 'NEED_TIMEOUT_PULL'
                         continue
 
-                    # GÜVENLİK BEKLEMESİ: Olta atıldıktan sonra İLK 2.8 SANİYE TARAMA YAPMA!
-                    # Karakter kolunu indirirken veya su köpürürken yanlış balon algılamasını %100 önler!
+                    # Settling guard (2.8 sn koruma: su köpürürken veya kol inerken tarama)
                     if elapsed < 2.8:
                         continue
 
@@ -1169,39 +1165,66 @@ def fish_bot_loop():
                         c['state'] = 'HOOKED'
                         c['hook_time'] = now
                         c['fish_delay'] = delay
-                        continue
 
-                # 3. HOOKED DURUMU (Balon geldi! Çek, zırh değiştir, yem tak, tekrar at)
-                if c['state'] == 'HOOKED':
-                    if now - c['hook_time'] >= c['fish_delay']:
-                        print(f"[BALIK BOTU] 🎣 İstemci #{c['id']}: Balon süresi doldu, olta çekiliyor (Tuş: {cfg_fish_rod_key})!")
-                        activate_game_window(c)
-                        isleep(0.08)
-                        press_key(cfg_fish_rod_key, count=1)
+            # ── 2. ADIM: ÖNCELİK 1 (EN YÜKSEK) - ACİL BALIK ÇEKME (HOOKED) ──
+            # Eğer herhangi bir ekranda balık vurmuş ve çekme gecikmesi dolmuşsa, DİĞER TÜM İŞLERİ DURDUR!
+            # En acil iş balığı kaçırmadan karaya çekmektir (çünkü balon sadece ~3-4 sn kalır).
+            pulled_any = False
+            for c in clients:
+                if c['state'] == 'HOOKED' and (now - c['hook_time'] >= c['fish_delay']):
+                    print(f"[BALIK BOTU] ⚡ [ÖNCELİK 1 - ACİL] İstemci #{c['id']}: Oltayı çek (Tuş: {cfg_fish_rod_key})!")
+                    activate_game_window(c)
+                    isleep(0.08)
+                    press_key(cfg_fish_rod_key, count=1)
 
-                        # Zırh animasyon sıfırlama (Her istemci kendi zırhını tak-çıkar yapar)
-                        if cfg_fish_armor_anim:
-                            isleep(0.12)
-                            do_armor_cancel_for_client(c)
-                            isleep(0.40)
-                        else:
-                            isleep(1.60)
+                    # Zırh animasyon iptali (tak-çıkar)
+                    if cfg_fish_armor_anim:
+                        isleep(0.12)
+                        do_armor_cancel_for_client(c)
+                        isleep(0.35)
+                    else:
+                        isleep(1.50)
 
-                        # Yem tak ve tekrar suya at
-                        if cfg_auto_bait:
-                            apply_client_bait(c['id'])
-                            if not isleep(1.20):
-                                break
+                    # Balık tutuldu ve zırhla animasyon sıfırlandı! Artık balığın kaçma tehlikesi kalmadı.
+                    # Yem takıp suya atma işini DÜŞÜK ÖNCELİK kuyruğuna (NEED_REBAIT) bırak.
+                    c['state'] = 'NEED_REBAIT'
+                    pulled_any = True
+                    # Hemen döngüyü yeniden kontrol et (diğer ekranda da acil balık varsa HEMEN onun da oltasını çek!)
+                    break
 
-                        print(f"[BALIK BOTU] 🎣 İstemci #{c['id']}: Yeni olta suya atılıyor (Tuş: {cfg_fish_rod_key})...")
-                        press_key(cfg_fish_rod_key, count=1)
-                        c['cast_time'] = time.time()
-                        c['state'] = 'WAITING_FISH'
-                        print(f"[BALIK BOTU] ✅ İstemci #{c['id']}: Zırh sıfırlandı, yem takıldı ve olta tekrar suda!")
-                        if not isleep(1.40):
-                            break
+            if pulled_any:
+                time.sleep(0.03)
+                continue
 
-            time.sleep(0.04)
+            # ── 3. ADIM: ÖNCELİK 2 - ZAMAN AŞIMI OLTASI ÇEKME (TIMEOUT) ──
+            timeout_pulled = False
+            for c in clients:
+                if c['state'] == 'NEED_TIMEOUT_PULL':
+                    print(f"[BALIK BOTU] 🔄 [ÖNCELİK 2] İstemci #{c['id']}: Zaman aşımı oltası çekiliyor...")
+                    activate_game_window(c)
+                    isleep(0.08)
+                    press_key(cfg_fish_rod_key, count=1)
+                    isleep(0.40)
+                    c['state'] = 'NEED_REBAIT'
+                    timeout_pulled = True
+                    break
+
+            if timeout_pulled:
+                time.sleep(0.03)
+                continue
+
+            # ── 4. ADIM: ÖNCELİK 3 - YEM TAKMA VE SUYA ATMA (NEED_REBAIT / NEED_CAST) ──
+            # Acil balık çekme işi yoksa, sıradaki oltayı yemleyip suya at.
+            # EMNİYET KURALI: Eğer herhangi bir ekranda 'HOOKED' varsa (gecikmesi dolmak üzere olan),
+            # yem takma gibi uzun süren (~2.4s) işe başlama; o balığın süresinin dolup hemen çekilmesini bekle!
+            has_pending_hook = any(c['state'] == 'HOOKED' for c in clients)
+            if not has_pending_hook:
+                for c in clients:
+                    if c['state'] in ('NEED_REBAIT', 'NEED_CAST'):
+                        cast_rod_for_client(c)
+                        break
+
+            time.sleep(0.03)
 
 
 skills_config = [] # GUI tarafında doldurulacak
